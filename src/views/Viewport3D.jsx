@@ -78,6 +78,7 @@ function createMaterials() {
     core: solid(),
     podium: solid(),
     bridge: linkMaterial(),
+    context: new THREE.MeshBasicMaterial({ vertexColors: true }),
     slab: new THREE.MeshBasicMaterial({
       color: 0x101010,
       side: THREE.DoubleSide,
@@ -539,6 +540,192 @@ function podiumData(podium) {
   };
 }
 
+/* ---------------------------------------------------------------------------
+ * Context: roads, plaza, clay massing, trees, people
+ * ------------------------------------------------------------------------- */
+
+const CTX_COLORS = {
+  asphalt: toLinear([0.075, 0.075, 0.08]),
+  plaza: toLinear([0.15, 0.15, 0.155]),
+  marking: toLinear([0.36, 0.36, 0.34]),
+  clay: pal([0.045, 0.045, 0.05], [0.29, 0.29, 0.3]),
+  canopy: pal([0.05, 0.07, 0.05], [0.27, 0.36, 0.26]),
+  trunk: pal([0.05, 0.04, 0.03], [0.2, 0.16, 0.12]),
+  figure: pal([0.25, 0.25, 0.25], [1, 1, 1]),
+};
+const PEOPLE_TONES = [
+  [0.78, 0.3, 0.24],
+  [0.26, 0.4, 0.68],
+  [0.86, 0.82, 0.72],
+  [0.2, 0.2, 0.22],
+  [0.58, 0.64, 0.4],
+  [0.9, 0.62, 0.3],
+].map((c) => new THREE.Color().setRGB(...toLinear(c)));
+
+/** Flat-coloured ground layer: plaza disc, ring road, street quads, lane dashes. */
+function roadsGeometry(context) {
+  const pos = [];
+  const col = [];
+  const tri = (a, b, c, color, z) => {
+    for (const p of [a, b, c]) {
+      pos.push(p[0], p[1], z);
+      col.push(...color);
+    }
+  };
+  const quad = (a, b, c, d, color, z) => {
+    tri(a, b, c, color, z);
+    tri(a, c, d, color, z);
+  };
+  const seg = 128;
+  const { plazaR, ring } = context;
+  const r0 = ring.r - ring.width / 2;
+  const r1 = ring.r + ring.width / 2;
+  for (let i = 0; i < seg; i++) {
+    const a0 = (i / seg) * Math.PI * 2;
+    const a1 = ((i + 1) / seg) * Math.PI * 2;
+    const c0 = [Math.cos(a0), Math.sin(a0)];
+    const c1 = [Math.cos(a1), Math.sin(a1)];
+    tri([0, 0], [c0[0] * plazaR, c0[1] * plazaR], [c1[0] * plazaR, c1[1] * plazaR], CTX_COLORS.plaza, 0.01);
+    quad([c0[0] * r0, c0[1] * r0], [c0[0] * r1, c0[1] * r1], [c1[0] * r1, c1[1] * r1], [c1[0] * r0, c1[1] * r0], CTX_COLORS.asphalt, 0.02);
+    if (i % 2 === 0) {
+      const rm0 = ring.r - 0.08;
+      const rm1 = ring.r + 0.08;
+      quad([c0[0] * rm0, c0[1] * rm0], [c0[0] * rm1, c0[1] * rm1], [c1[0] * rm1, c1[1] * rm1], [c1[0] * rm0, c1[1] * rm0], CTX_COLORS.marking, 0.04);
+    }
+  }
+  const hw = context.street / 2;
+  for (const s of context.streets) {
+    const len = Math.hypot(s.x1 - s.x0, s.y1 - s.y0);
+    const ux = (s.x1 - s.x0) / len;
+    const uy = (s.y1 - s.y0) / len;
+    const nx = -uy * hw;
+    const ny = ux * hw;
+    quad([s.x0 + nx, s.y0 + ny], [s.x1 + nx, s.y1 + ny], [s.x1 - nx, s.y1 - ny], [s.x0 - nx, s.y0 - ny], CTX_COLORS.asphalt, 0.02);
+    // centre-line dashes: 3 m on, 4 m off
+    for (let t = 0; t + 3 < len; t += 7) {
+      const ax = s.x0 + ux * t;
+      const ay = s.y0 + uy * t;
+      const bx = ax + ux * 3;
+      const by = ay + uy * 3;
+      const mx = -uy * 0.1;
+      const my = ux * 0.1;
+      quad([ax + mx, ay + my], [bx + mx, by + my], [bx - mx, by - my], [ax - mx, ay - my], CTX_COLORS.marking, 0.04);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  return g;
+}
+
+/** Bake normal-based shading into a (non-indexed or indexed) geometry's colours. */
+function bakeColors(geom, palette) {
+  const n = geom.attributes.normal.array;
+  const out = new Float32Array(n.length);
+  for (let i = 0; i < n.length; i += 3) writeColor(out, i, lightAt(n[i], n[i + 1], n[i + 2]), palette);
+  geom.setAttribute('color', new THREE.BufferAttribute(out, 3));
+  return geom;
+}
+
+/** Unit clay block: 1 × 1 × 1 with its base on z = 0 (data space, z up). */
+function blockGeometry() {
+  const g = new THREE.BoxGeometry(1, 1, 1);
+  g.translate(0, 0, 0.5);
+  return bakeColors(g, CTX_COLORS.clay);
+}
+
+/** Unit tree: squashed icosphere canopy on a trunk; scaled by (r, r, h). */
+function treeGeometry() {
+  const canopy = new THREE.IcosahedronGeometry(1, 1);
+  canopy.scale(1, 1, 0.42);
+  canopy.translate(0, 0, 0.6);
+  bakeColors(canopy, CTX_COLORS.canopy);
+  const trunk = new THREE.CylinderGeometry(0.07, 0.09, 0.45, 6);
+  trunk.rotateX(Math.PI / 2);
+  trunk.translate(0, 0, 0.225);
+  bakeColors(trunk, CTX_COLORS.trunk);
+  return mergeSimple([flat(canopy), flat(trunk)]);
+}
+
+/** Unit person, 1 m tall (scaled by height): legs, torso, shoulders, head. */
+function figureGeometry() {
+  const parts = [];
+  const add = (g, x, z) => {
+    g.translate(x, 0, z);
+    parts.push(flat(bakeColors(g, CTX_COLORS.figure)));
+  };
+  const leg = () => {
+    const g = new THREE.CylinderGeometry(0.045, 0.04, 0.47, 6);
+    g.rotateX(Math.PI / 2);
+    return g;
+  };
+  add(leg(), -0.05, 0.235);
+  add(leg(), 0.05, 0.235);
+  const torso = new THREE.CylinderGeometry(0.1, 0.085, 0.36, 8);
+  torso.rotateX(Math.PI / 2);
+  torso.scale(1, 0.62, 1);
+  add(torso, 0, 0.65);
+  const head = new THREE.SphereGeometry(0.065, 10, 8);
+  add(head, 0, 0.9);
+  return mergeSimple(parts);
+}
+
+const flat = (g) => (g.index ? g.toNonIndexed() : g);
+
+/** Merge non-indexed geometries that all carry position, normal and color. */
+function mergeSimple(geoms) {
+  const total = geoms.reduce((n, g) => n + g.attributes.position.array.length, 0);
+  const out = new THREE.BufferGeometry();
+  for (const name of ['position', 'normal', 'color']) {
+    const arr = new Float32Array(total);
+    let o = 0;
+    for (const g of geoms) {
+      arr.set(g.attributes[name].array, o);
+      o += g.attributes[name].array.length;
+    }
+    out.setAttribute(name, new THREE.BufferAttribute(arr, 3));
+  }
+  geoms.forEach((g) => g.dispose());
+  return out;
+}
+
+/** Rebuild the context group (only when the cached context object changes). */
+function buildContextGroup(ctx, context) {
+  const group = ctx.contextGroup;
+  for (const child of [...group.children]) {
+    group.remove(child);
+    child.geometry.dispose();
+    if (child.dispose) child.dispose();
+  }
+  const roads = new THREE.Mesh(roadsGeometry(context), ctx.mats.context);
+  roads.frustumCulled = false;
+  group.add(roads);
+
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const p = new THREE.Vector3();
+  const s = new THREE.Vector3();
+
+  const blocks = new THREE.InstancedMesh(blockGeometry(), ctx.mats.context, context.blocks.length);
+  context.blocks.forEach((b, i) => blocks.setMatrixAt(i, m.compose(p.set(b.x, b.y, 0), q, s.set(b.w, b.d, b.h))));
+
+  const trees = new THREE.InstancedMesh(treeGeometry(), ctx.mats.context, context.trees.length);
+  context.trees.forEach((t, i) => trees.setMatrixAt(i, m.compose(p.set(t.x, t.y, 0), q, s.set(t.r, t.r, t.h))));
+
+  const people = new THREE.InstancedMesh(figureGeometry(), ctx.mats.context, context.people.length);
+  context.people.forEach((h, i) => {
+    people.setMatrixAt(i, m.compose(p.set(h.x, h.y, h.z), q, s.set(h.h, h.h, h.h)));
+    people.setColorAt(i, PEOPLE_TONES[h.tone]);
+  });
+
+  for (const im of [blocks, trees, people]) {
+    im.frustumCulled = false;
+    im.instanceMatrix.needsUpdate = true;
+    if (im.instanceColor) im.instanceColor.needsUpdate = true;
+    group.add(im);
+  }
+}
+
 function makeQuad(fillMat, edgeMat) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(12), 3));
@@ -614,6 +801,11 @@ function rebuild(ctx, model) {
 
   const pd = podiumData(podium);
   writeGeometry(ctx.podiumMesh, pd.positions, pd.colors, pd.indexLength, pd.makeIndex);
+
+  if (model.context !== ctx.lastContext) {
+    buildContextGroup(ctx, model.context);
+    ctx.lastContext = model.context;
+  }
 
   // Camera: frame once, then only follow height changes vertically.
   const span = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
@@ -732,6 +924,8 @@ export default function Viewport3D({ model, planLevel, sectionAxis, sectionPos, 
 
     const towerGroup = new THREE.Group();
     root.add(towerGroup);
+    const contextGroup = new THREE.Group();
+    root.add(contextGroup);
 
     const bridgeMesh = makeMesh(mats.bridge);
     const podiumMesh = makeMesh(mats.podium);
@@ -748,6 +942,8 @@ export default function Viewport3D({ model, planLevel, sectionAxis, sectionPos, 
       mats,
       towerGroup,
       towerObjs: [],
+      contextGroup,
+      lastContext: null,
       bridgeMesh,
       podiumMesh,
       planQuad,

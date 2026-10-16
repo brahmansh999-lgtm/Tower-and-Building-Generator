@@ -28,7 +28,8 @@
  *   bridges: [{ fromTower, toTower, level, storeys, kind, z, height, span,
  *               ux, uy, attachA, attachB, stations, outline2D, zMin, zMax }],
  *   podium: { outline2D, height, floors, area, basementLevels, basementDepth },
- *   bounds: { minX, maxX, minY, maxY, maxZ },
+ *   context: { plazaR, ring, street, streets, blocks, trees, people },
+ *   bounds: { minX, maxX, minY, maxY, maxZ },     (site only, context excluded)
  *   stats:  { gfa, floors, totalFloors, height, towers, bridges, sway, twist, finCount }
  * }
  */
@@ -755,6 +756,7 @@ export function generateTower(params = {}) {
     towers,
     bridges,
     podium,
+    context: buildContext(towers, podium),
     bounds,
     stats: {
       gfa,
@@ -768,6 +770,375 @@ export function generateTower(params = {}) {
       finCount: finCountFor(width),
     },
   };
+}
+
+/* ---------------------------------------------------------------------------
+ * Urban context + people (seeded, so it is stable while sliders move)
+ * ------------------------------------------------------------------------- */
+
+/** Small deterministic PRNG (mulberry32). */
+function rng32(seed) {
+  let a = seed | 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Even-odd point-in-polygon test on a flat [x,y,…] array. */
+export function pointInPolygon(p, x, y) {
+  let inside = false;
+  for (let i = 0, j = p.length - 2; i < p.length; j = i, i += 2) {
+    const yi = p[i + 1];
+    const yj = p[j + 1];
+    if (yi > y !== yj > y && x < ((p[j] - p[i]) * (y - yi)) / (yj - yi) + p[i]) inside = !inside;
+  }
+  return inside;
+}
+
+export const CONTEXT = {
+  GRID: 84, //    street grid pitch (m)
+  STREET: 14, //  street width (m)
+  EXTENT: 640, // radius of generated context (m)
+  RING: 14, //    ring road width (m)
+};
+
+/**
+ * Context around the site:
+ *  - plaza: paved disc from the podium edge out to `plazaR`
+ *  - ring road around the plaza, then an orthogonal street grid beyond it,
+ *    with streets clipped where they would enter the ring
+ *  - blocks: grid cells inset by sidewalks, split into 1–4 lots of clay
+ *    massing; heights fall off with distance (taller "downtown" near the site)
+ *    and stay well below the towers; ~12 % of cells are parks
+ *  - trees: along every street, around the plaza edge and scattered in parks
+ *  - people (1.6–1.9 m): on the plaza, on sidewalks and on the podium roof
+ */
+let contextCache = { key: '', value: null };
+
+function buildContext(towers, podium) {
+  const p = podium.outline2D;
+  let rPodExact = 0;
+  for (let i = 0; i < p.length; i += 2) rPodExact = Math.max(rPodExact, Math.hypot(p[i], p[i + 1]));
+  // Context only depends on the site footprint; cache it (2 m steps) so
+  // dragging sway / twist does not regenerate the city every frame.
+  const rPod = Math.ceil(rPodExact / 2) * 2;
+  const tallestKey = towers.reduce((m, T) => Math.max(m, T.floors.length), 0);
+  const key = `${rPod}|${tallestKey}|${podium.height}|${towers.length}|${towers.map((T) => T.floors[0].cx.toFixed(0)).join(',')}`;
+  if (contextCache.key === key) return contextCache.value;
+  const value = buildContextUncached(towers, podium, rPod);
+  contextCache = { key, value };
+  return value;
+}
+
+function buildContextUncached(towers, podium, rPod) {
+  const rnd = rng32(20261016);
+  const { GRID, STREET, EXTENT, RING } = CONTEXT;
+  const p = podium.outline2D;
+  const plazaR = rPod + 22;
+  const ringR = plazaR + RING / 2;
+  const clearR = ringR + RING / 2 + 8;
+  const tallest = towers.reduce((m, T) => Math.max(m, T.floors[T.floors.length - 1].z), 0);
+  const hCap = Math.max(24, tallest * 0.28);
+
+  // Streets (clipped by the ring)
+  const streets = [];
+  const nLines = Math.ceil(EXTENT / GRID);
+  for (let k = -nLines; k <= nLines; k++) {
+    const c = k * GRID;
+    for (const vertical of [true, false]) {
+      const spans = [];
+      if (Math.abs(c) < ringR) {
+        const e = Math.sqrt(ringR * ringR - c * c);
+        spans.push([-EXTENT, -e], [e, EXTENT]);
+      } else spans.push([-EXTENT, EXTENT]);
+      for (const [a, b] of spans) {
+        streets.push(vertical ? { x0: c, y0: a, x1: c, y1: b } : { x0: a, y0: c, x1: b, y1: c });
+      }
+    }
+  }
+
+  // Blocks, parks
+  const blocks = [];
+  const trees = [];
+  const inset = STREET / 2 + 3.5;
+  for (let i = -nLines; i < nLines; i++) {
+    for (let j = -nLines; j < nLines; j++) {
+      const x0 = i * GRID + inset;
+      const x1 = (i + 1) * GRID - inset;
+      const y0 = j * GRID + inset;
+      const y1 = (j + 1) * GRID - inset;
+      const cx = (x0 + x1) / 2;
+      const cy = (y0 + y1) / 2;
+      const d = Math.hypot(cx, cy);
+      if (d > EXTENT) continue;
+      const park = rnd() < 0.12;
+      if (park) {
+        const n = Math.round((x1 - x0) * (y1 - y0) * 0.006);
+        for (let t = 0; t < n; t++) {
+          const x = x0 + rnd() * (x1 - x0);
+          const y = y0 + rnd() * (y1 - y0);
+          if (Math.hypot(x, y) > clearR) trees.push({ x, y, r: 2.4 + rnd() * 1.6, h: 7 + rnd() * 5 });
+        }
+        continue;
+      }
+      const sx = rnd() < 0.6 ? 2 : 1;
+      const sy = rnd() < 0.6 ? 2 : 1;
+      const falloff = clamp(1 - (d - clearR) / 420, 0.15, 1);
+      for (let a = 0; a < sx; a++) {
+        for (let b = 0; b < sy; b++) {
+          const lx0 = x0 + ((x1 - x0) * a) / sx + 2.5;
+          const lx1 = x0 + ((x1 - x0) * (a + 1)) / sx - 2.5;
+          const ly0 = y0 + ((y1 - y0) * b) / sy + 2.5;
+          const ly1 = y0 + ((y1 - y0) * (b + 1)) / sy - 2.5;
+          const k = 0.7 + rnd() * 0.3;
+          const w = (lx1 - lx0) * k;
+          const dd = (ly1 - ly0) * (0.7 + rnd() * 0.3);
+          const bx = (lx0 + lx1) / 2;
+          const by = (ly0 + ly1) / 2;
+          // footprint must stay clear of the plaza / ring
+          const near = Math.hypot(Math.max(Math.abs(bx) - w / 2, 0), Math.max(Math.abs(by) - dd / 2, 0));
+          if (near < clearR) continue;
+          const storeys = Math.max(3, Math.round((10 + Math.pow(rnd(), 1.8) * hCap * falloff) / 3.5));
+          blocks.push({ x: bx, y: by, w, d: dd, h: storeys * 3.5 });
+        }
+      }
+    }
+  }
+
+  // Street trees, both sides, every 13 m, outside the ring
+  for (const s of streets) {
+    const len = Math.hypot(s.x1 - s.x0, s.y1 - s.y0);
+    const ux = (s.x1 - s.x0) / len;
+    const uy = (s.y1 - s.y0) / len;
+    for (let t = 6; t < len; t += 13) {
+      for (const side of [-1, 1]) {
+        const x = s.x0 + ux * t - uy * side * (STREET / 2 + 1.6);
+        const y = s.y0 + uy * t + ux * side * (STREET / 2 + 1.6);
+        if (Math.hypot(x, y) > clearR - 4 && Math.hypot(x, y) < EXTENT) trees.push({ x, y, r: 2 + rnd() * 1.2, h: 6 + rnd() * 3 });
+      }
+    }
+  }
+  // Plaza edge trees
+  const nPlaza = Math.round((2 * Math.PI * (plazaR - 4)) / 11);
+  for (let k = 0; k < nPlaza; k++) {
+    const a = (2 * Math.PI * k) / nPlaza;
+    trees.push({ x: Math.cos(a) * (plazaR - 4), y: Math.sin(a) * (plazaR - 4), r: 2.6, h: 8 });
+  }
+
+  // People
+  const people = [];
+  const person = (x, y, z) => people.push({ x, y, z, h: 1.6 + rnd() * 0.3, tone: Math.floor(rnd() * 6) });
+  for (let n = 0; n < 160; n++) {
+    const a = rnd() * Math.PI * 2;
+    const r = rPod + 3 + rnd() * (plazaR - rPod - 9);
+    const x = Math.cos(a) * r;
+    const y = Math.sin(a) * r;
+    if (!pointInPolygon(p, x, y)) person(x, y, 0);
+  }
+  for (let n = 0; n < 220; n++) {
+    const s = streets[Math.floor(rnd() * streets.length)];
+    const t = rnd();
+    const side = rnd() < 0.5 ? -1 : 1;
+    const len = Math.hypot(s.x1 - s.x0, s.y1 - s.y0);
+    const ux = (s.x1 - s.x0) / len;
+    const uy = (s.y1 - s.y0) / len;
+    const off = STREET / 2 + 0.8 + rnd() * 2;
+    const x = s.x0 + (s.x1 - s.x0) * t - uy * side * off;
+    const y = s.y0 + (s.y1 - s.y0) * t + ux * side * off;
+    if (Math.hypot(x, y) > clearR - 4 && Math.hypot(x, y) < EXTENT * 0.8) person(x, y, 0);
+  }
+  for (let n = 0; n < 80; n++) {
+    const a = rnd() * Math.PI * 2;
+    const r = rnd() * rPod;
+    const x = Math.cos(a) * r;
+    const y = Math.sin(a) * r;
+    if (!pointInPolygon(p, x, y)) continue;
+    if (towers.some((T) => pointInPolygon(T.floors[0].points2D, x, y))) continue;
+    person(x, y, podium.height);
+  }
+
+  return { plazaR, ring: { r: ringR, width: RING }, street: STREET, streets, blocks, trees, people };
+}
+
+/* ---------------------------------------------------------------------------
+ * Floor fit-out (computed on demand for the plan level)
+ * ------------------------------------------------------------------------- */
+
+const CORRIDOR = 1.6; // m of corridor around the core on residential floors
+
+/**
+ * Fit out one floor of one tower. Works in the core's frame (origin = plate
+ * centre, x along the core's long axis) using polar rays: for any angle θ,
+ *   rIn(θ)  = distance to the corridor edge (core rect grown by CORRIDOR)
+ *   rOut(θ) = distance to the facade (ray-cast on the twisted plate) − 0.3 m
+ * Use follows the floor: podium-height floors = LOBBY, MEP floors = PLANT,
+ * the lowest lift zone of a multi-zone tower = OFFICE, everything else =
+ * RESIDENTIAL.
+ *
+ * Returns world-space data the plan draws directly:
+ *   { use, walls: [x0,y0,x1,y1,…], rooms: [{x,y,text}],
+ *     furniture: [{type, x, y, w, d, rot}], people: [{x, y, rot}] }
+ */
+export function floorFitout(tower, level, podium) {
+  const F = tower.floors[level];
+  if (!F) return null;
+  const zone = tower.coreZones[F.zone];
+  const rot = tower.coreRot;
+  const cc = Math.cos(rot);
+  const cs = Math.sin(rot);
+  const rnd = rng32(tower.index * 7919 + level * 104729 + 1);
+  const hxc = zone.hx + CORRIDOR;
+  const hyc = zone.hy + CORRIDOR;
+
+  const use = F.mep
+    ? 'plant'
+    : F.z < podium.height
+      ? 'lobby'
+      : tower.mepFloors.length && F.zone === 0
+        ? 'office'
+        : 'residential';
+
+  const W = (lx, ly) => [F.cx + lx * cc - ly * cs, F.cy + lx * cs + ly * cc];
+  const rIn = (th) => Math.min(hxc / Math.max(Math.abs(Math.cos(th)), 1e-6), hyc / Math.max(Math.abs(Math.sin(th)), 1e-6));
+  const rOut = (th) => {
+    const dx = Math.cos(th + rot);
+    const dy = Math.sin(th + rot);
+    return rayHitPolygon(F.points2D, F.cx, F.cy, dx, dy) - 0.3;
+  };
+  const polar = (th, r) => W(Math.cos(th) * r, Math.sin(th) * r);
+
+  const walls = [];
+  const rooms = [];
+  const furniture = [];
+  const people = [];
+  const wall = (a, b) => walls.push(a[0], a[1], b[0], b[1]);
+  const item = (type, th, r, w, d, turn = 0) => {
+    const [x, y] = polar(th, r);
+    furniture.push({ type, x, y, w, d, rot: th + rot + turn });
+  };
+  const insideLease = (lx, ly, margin = 0.8) => {
+    if (Math.abs(lx) < hxc + margin && Math.abs(ly) < hyc + margin) return false;
+    const th = Math.atan2(ly, lx);
+    return Math.hypot(lx, ly) < rOut(th) - margin;
+  };
+  const scatterPeople = (n) => {
+    for (let k = 0, tries = 0; k < n && tries < n * 20; tries++) {
+      const th = rnd() * Math.PI * 2;
+      const r = rIn(th) + 0.8 + rnd() * Math.max(0, rOut(th) - rIn(th) - 1.6);
+      const lx = Math.cos(th) * r;
+      const ly = Math.sin(th) * r;
+      if (!insideLease(lx, ly, 0.5)) continue;
+      const [x, y] = W(lx, ly);
+      people.push({ x, y, rot: rnd() * Math.PI * 2 });
+      k++;
+    }
+  };
+  const corridorWalls = () => {
+    const c = [W(-hxc, -hyc), W(hxc, -hyc), W(hxc, hyc), W(-hxc, hyc)];
+    for (let q = 0; q < 4; q++) wall(c[q], c[(q + 1) % 4]);
+  };
+
+  if (use === 'residential') {
+    corridorWalls();
+    const perim = 2 * Math.PI * F.r * (1 + tower.character.aspect) * 0.5;
+    const n = clamp(Math.round(perim / 14), 4, 10);
+    const span = (2 * Math.PI) / n;
+    for (let k = 0; k < n; k++) {
+      const a = span * k + span / 2;
+      wall(polar(a, rIn(a)), polar(a, rOut(a)));
+    }
+    for (let k = 0; k < n; k++) {
+      const a0 = span * k + span / 2;
+      const am = a0 + span / 2;
+      const ri = rIn(am);
+      const depth = rOut(am) - ri;
+      const arcMid = (ri + depth * 0.6) * span;
+      rooms.push({ ...xy(polar(am, ri + depth * 0.5)), text: `APT ${String(k + 1).padStart(2, '0')}` });
+      // bed/living partition, partial from 35 % depth to the facade
+      const as = a0 + span * 0.48;
+      wall(polar(as, rIn(as) + (rOut(as) - rIn(as)) * 0.35), polar(as, rOut(as)));
+      // bathroom pod near the corridor on the bedroom side
+      const ab = a0 + span * 0.24;
+      item('bathroom', ab, rIn(ab) + 1.5, Math.min(2.6, arcMid * 0.4), 2.4, Math.PI / 2);
+      // bedroom: bed with its head against the partition side
+      const abd = a0 + span * 0.24;
+      item('bed', abd, rIn(abd) + (rOut(abd) - rIn(abd)) * 0.72, 1.6, 2.0);
+      if (depth > 6.5 && arcMid > 5.5) {
+        const al = a0 + span * 0.74;
+        const rl = rIn(al);
+        const dl = rOut(al) - rl;
+        item('counter', al, rl + 0.6, Math.min(3.2, (rl + 0.6) * span * 0.35), 0.65, Math.PI / 2);
+        item('dining', al, rl + dl * 0.4, 1.6, 0.9, Math.PI / 2);
+        item('sofa', al, rl + dl * 0.84, 2.2, 0.9, Math.PI / 2);
+        item('coffee', al, rl + dl * 0.68, 1.0, 0.55, Math.PI / 2);
+      } else {
+        const al = a0 + span * 0.74;
+        item('sofa', al, rIn(al) + (rOut(al) - rIn(al)) * 0.75, 2.0, 0.85, Math.PI / 2);
+      }
+      item('plant', a0 + span * 0.92, rOut(a0 + span * 0.92) - 0.6, 0.6, 0.6);
+    }
+    scatterPeople(Math.round(n * 0.6));
+  } else if (use === 'office') {
+    // two meeting rooms on the core's long axis, the rest open-plan desks
+    const meet = [0, Math.PI];
+    const half = 0.32;
+    for (const m of meet) {
+      for (const e of [m - half, m + half]) wall(polar(e, rIn(e)), polar(e, rOut(e)));
+      const r = rIn(m) + (rOut(m) - rIn(m)) * 0.5;
+      item('meeting', m, r, Math.min(3.6, (rOut(m) - rIn(m)) * 0.5), 1.4, Math.PI / 2);
+      rooms.push({ ...xy(polar(m, rIn(m) + 0.9)), text: 'MEET' });
+    }
+    const inMeeting = (lx, ly) => {
+      const th = Math.atan2(ly, lx);
+      return meet.some((m) => Math.abs(Math.atan2(Math.sin(th - m), Math.cos(th - m))) < half + 0.12);
+    };
+    const R = F.r * 1.1;
+    for (let lx = -R; lx <= R; lx += 4.2) {
+      for (let ly = -R; ly <= R; ly += 3.8) {
+        const ok = [
+          [-2, -1.4],
+          [2, -1.4],
+          [2, 1.4],
+          [-2, 1.4],
+        ].every(([ox, oy]) => insideLease(lx + ox, ly + oy, 0.4) && !inMeeting(lx + ox, ly + oy));
+        if (!ok) continue;
+        const [x, y] = W(lx, ly);
+        furniture.push({ type: 'desks', x, y, w: 3.2, d: 1.6, rot });
+        if (rnd() < 0.45) people.push({ x: x + (rnd() - 0.5) * 2, y: y + (rnd() - 0.5) * 2, rot: rnd() * 6.28 });
+      }
+    }
+    rooms.push({ ...xy(polar(Math.PI / 2, rIn(Math.PI / 2) + 2.2)), text: 'OPEN-PLAN OFFICE' });
+    scatterPeople(4);
+  } else if (use === 'lobby') {
+    const a = -Math.PI / 2;
+    item('reception', a, rIn(a) + 2.6, 5.5, 1.1, Math.PI / 2);
+    for (const q of [Math.PI / 4, (3 * Math.PI) / 4, (5 * Math.PI) / 4, (7 * Math.PI) / 4]) {
+      item('lounge', q, rIn(q) + (rOut(q) - rIn(q)) * 0.55, 3, 2.4, Math.PI / 2);
+    }
+    for (let k = 0; k < 8; k++) {
+      const q = (k / 8) * Math.PI * 2;
+      item('plant', q, rOut(q) - 0.8, 0.8, 0.8);
+    }
+    rooms.push({ ...xy(polar(a, rIn(a) + 5)), text: 'LOBBY' });
+    scatterPeople(10);
+  } else {
+    corridorWalls();
+    for (let k = 0; k < 6; k++) {
+      const q = (k / 6) * Math.PI * 2 + 0.3;
+      item('ahu', q, rIn(q) + (rOut(q) - rIn(q)) * 0.5, 4.2, 2.2, Math.PI / 2);
+    }
+    rooms.push({ ...xy(polar(Math.PI / 2, rIn(Math.PI / 2) + 2)), text: 'PLANT / REFUGE' });
+    scatterPeople(1);
+  }
+
+  return { use, walls, rooms, furniture, people };
+}
+
+function xy([x, y]) {
+  return { x, y };
 }
 
 /* ---------------------------------------------------------------------------

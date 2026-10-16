@@ -52,6 +52,10 @@ export default function App() {
   const onForm = useCallback((k, v) => setForm((f) => ({ ...f, [k]: v })), []);
   const onCuts = useCallback((k, v) => setCuts((c) => ({ ...c, [k]: v })), []);
 
+  // Plan framing: whole site, or zoomed onto one tower to read the fit-out.
+  const [planFocus, setPlanFocus] = useState(0);
+  const focus = planFocus === 'site' || planFocus < model.towers.length ? planFocus : 'site';
+
   const maxLevel = model.params.floors - 1;
   const planLevel = Math.min(cutsD.planLevel, maxLevel);
   const [lo, hi] = sectionRange(model.bounds, cutsD.axis);
@@ -132,10 +136,22 @@ export default function App() {
         <section className="panel">
           <div className="panel-head">
             <span>PLAN</span>
+            <span className="focus">
+              {['site', ...model.towers.map((T) => T.index)].map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  className={f === focus ? 'focus-btn is-on' : 'focus-btn'}
+                  onClick={() => setPlanFocus(f)}
+                >
+                  {f === 'site' ? 'SITE' : model.towers[f].name}
+                </button>
+              ))}
+            </span>
             <span className="cyan">+{(planLevel * FLOOR_HEIGHT).toFixed(1)} M</span>
           </div>
           <div className="panel-body">
-            <PlanView model={model} level={planLevel} sectionAxis={cutsD.axis} sectionPos={sectionPos} />
+            <PlanView model={model} level={planLevel} sectionAxis={cutsD.axis} sectionPos={sectionPos} focus={focus} />
           </div>
         </section>
         <section className="panel">

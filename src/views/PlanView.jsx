@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { FLOOR_HEIGHT, PARAPET } from '../geometry/generateTower.js';
+import { FLOOR_HEIGHT, PARAPET, floorFitout } from '../geometry/generateTower.js';
 
 const TICK_PX = 4;
 const SCALE_STEPS = [5, 10, 20, 25, 50, 100, 200, 250, 500];
@@ -27,13 +27,90 @@ export function niceScaleLength(pxPerMetre, targetPx) {
 
 const n1 = (v) => v.toFixed(1);
 
-export default function PlanView({ model, level, sectionAxis, sectionPos }) {
+/*
+ * Furniture symbols. Each item is drawn in its own frame: u along `rot`
+ * (width w), v perpendicular (depth d), centred on (x, y). R() is a rectangle
+ * and C() a circle in that frame; both return SVG path data in screen space.
+ */
+function furniturePath(it, X, Y, s) {
+  const c = Math.cos(it.rot);
+  const sn = Math.sin(it.rot);
+  const P = (u, v) => `${n1(X(it.x + u * c - v * sn))},${n1(Y(it.y + u * sn + v * c))}`;
+  const R = (u, v, w, d) =>
+    `M${P(u - w / 2, v - d / 2)}L${P(u + w / 2, v - d / 2)}L${P(u + w / 2, v + d / 2)}L${P(u - w / 2, v + d / 2)}Z`;
+  const C = (u, v, r) => {
+    const x = X(it.x + u * c - v * sn);
+    const y = Y(it.y + u * sn + v * c);
+    const rp = Math.max(0.6, r * s);
+    return `M${n1(x - rp)},${n1(y)}a${n1(rp)},${n1(rp)} 0 1,0 ${n1(2 * rp)},0a${n1(rp)},${n1(rp)} 0 1,0 ${n1(-2 * rp)},0`;
+  };
+  const L = (u0, v0, u1, v1) => `M${P(u0, v0)}L${P(u1, v1)}`;
+  const { w, d } = it;
+  switch (it.type) {
+    case 'bed':
+      return R(0, 0, w, d) + R(-w / 4, d / 2 - 0.3, w / 2 - 0.12, 0.34) + R(w / 4, d / 2 - 0.3, w / 2 - 0.12, 0.34) + L(-w / 2, d / 2 - 0.75, w / 2, d / 2 - 0.75);
+    case 'sofa':
+      return R(0, 0, w, d) + R(0, d / 2 - 0.12, w, 0.24) + R(-w / 2 + 0.12, 0, 0.24, d) + R(w / 2 - 0.12, 0, 0.24, d);
+    case 'coffee':
+    case 'reception':
+      return R(0, 0, w, d) + (it.type === 'reception' ? R(0, 0, w - 0.4, d - 0.5) : '');
+    case 'dining':
+      return R(0, 0, w, d) + [-w / 4, w / 4].map((u) => R(u, d / 2 + 0.3, 0.44, 0.4) + R(u, -d / 2 - 0.3, 0.44, 0.4)).join('');
+    case 'counter':
+      return R(0, 0, w, d) + C(w / 4, 0, 0.2) + C(-w / 4, -0.12, 0.1) + C(-w / 4 + 0.3, 0.12, 0.1);
+    case 'bathroom':
+      return R(0, 0, w, d) + C(-w / 4, d / 2 - 0.5, 0.2) + R(-w / 4, d / 2 - 0.14, 0.42, 0.22) + R(w / 4, d / 2 - 0.28, 0.5, 0.36) + R(w / 4, -d / 4, w / 2 - 0.15, d / 2 - 0.15) + L(w / 4 - w / 4 + 0.08, -d / 2 + 0.08, w / 2 - 0.08, -0.08);
+    case 'desks':
+      return [-0.8, 0.8].map((u) => R(u, -0.4, 1.5, 0.75) + R(u, 0.4, 1.5, 0.75) + C(u, -1.15, 0.26) + C(u, 1.15, 0.26)).join('');
+    case 'meeting': {
+      let p = R(0, 0, w, d);
+      const n = Math.max(2, Math.floor(w / 0.8));
+      for (let k = 0; k < n; k++) {
+        const u = -w / 2 + (w * (k + 0.5)) / n;
+        p += C(u, d / 2 + 0.38, 0.24) + C(u, -d / 2 - 0.38, 0.24);
+      }
+      return p;
+    }
+    case 'lounge':
+      return R(0, d / 2 - 0.45, w * 0.75, 0.85) + R(0, d / 2 - 0.15, w * 0.75, 0.24) + R(-w / 2 + 0.2, -0.2, 0.8, 0.8) + R(w / 2 - 0.2, -0.2, 0.8, 0.8) + R(0, -0.15, 1.1, 0.6);
+    case 'plant':
+      return C(0, 0, w / 2) + C(0, 0, w / 4);
+    case 'ahu':
+      return R(0, 0, w, d) + L(-w / 2, -d / 2, w / 2, d / 2) + L(-w / 2, d / 2, w / 2, -d / 2);
+    default:
+      return R(0, 0, w, d);
+  }
+}
+
+/** Plan-view person: head + shoulders, ~0.55 m across. */
+function personPath(p, X, Y, s) {
+  const it = { x: p.x, y: p.y, rot: p.rot, w: 0.55, d: 0.3, type: 'person' };
+  const r = Math.max(1, 0.2 * s);
+  return furniturePath(it, X, Y, s) + `M${n1(X(p.x) - r)},${n1(Y(p.y))}a${n1(r)},${n1(r)} 0 1,0 ${n1(2 * r)},0a${n1(r)},${n1(r)} 0 1,0 ${n1(-2 * r)},0`;
+}
+
+export default function PlanView({ model, level, sectionAxis, sectionPos, focus = 'site' }) {
   const hostRef = useRef(null);
   const { w, h } = useElementSize(hostRef);
 
   const drawing = useMemo(() => {
     if (w < 40 || h < 40) return null;
-    const { bounds, towers, bridges, podium } = model;
+    const { towers, bridges, podium, context } = model;
+
+    // Frame: whole site, or one tower's plate at this level (± a margin).
+    let bounds = model.bounds;
+    const ft = typeof focus === 'number' ? towers[focus] : null;
+    if (ft) {
+      const F = ft.floors[Math.min(level, ft.floors.length - 1)];
+      const p = F.points2D;
+      bounds = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
+      for (let j = 0; j < p.length; j += 2) {
+        bounds.minX = Math.min(bounds.minX, p[j] - 6);
+        bounds.maxX = Math.max(bounds.maxX, p[j] + 6);
+        bounds.minY = Math.min(bounds.minY, p[j + 1] - 6);
+        bounds.maxY = Math.max(bounds.maxY, p[j + 1] + 6);
+      }
+    }
 
     const margin = 38;
     const bw = Math.max(1, bounds.maxX - bounds.minX);
@@ -99,6 +176,59 @@ export default function PlanView({ model, level, sectionAxis, sectionPos }) {
       drift += `M${pt(G.cx, G.cy)}L${pt(F.cx, F.cy)}`;
       labels.push({ x: X(G.cx), y: Y(G.cy) + G.r * 0.78 * s + 14, text: `${T.name} · ${T.floors.length} FL`, cx: X(F.cx), cy: Y(F.cy) });
     });
+
+    /*
+     * Fit-out (rooms, furniture, people) from floorFitout() — shown once the
+     * plan is large enough to read it (≥ 2 px per metre).
+     */
+    const fitout = s >= 2;
+    let fitWalls = '';
+    let furniture = '';
+    let figures = '';
+    const roomLabels = [];
+    if (fitout) {
+      towers.forEach((T) => {
+        const fo = floorFitout(T, level, podium);
+        if (!fo) return;
+        for (let k = 0; k < fo.walls.length; k += 4) {
+          fitWalls += `M${pt(fo.walls[k], fo.walls[k + 1])}L${pt(fo.walls[k + 2], fo.walls[k + 3])}`;
+        }
+        for (const it of fo.furniture) furniture += furniturePath(it, X, Y, s);
+        for (const p of fo.people) figures += personPath(p, X, Y, s);
+        fo.rooms.forEach((r, i) => roomLabels.push({ key: `${T.name}${i}`, x: X(r.x), y: Y(r.y), text: r.text }));
+      });
+    }
+
+    /*
+     * Urban context around the site (only what falls inside this view): streets,
+     * ring road, plaza edge, clay blocks, trees; people on the ground plane only
+     * when the plan cuts at ground level.
+     */
+    const vx0 = mx - w / 2 / s;
+    const vx1 = mx + w / 2 / s;
+    const vy0 = my - h / 2 / s;
+    const vy1 = my + h / 2 / s;
+    const inView = (x, y, r = 0) => x + r > vx0 && x - r < vx1 && y + r > vy0 && y - r < vy1;
+    let ctxBlocks = '';
+    let ctxTrees = '';
+    let ctxPeople = '';
+    let ctxStreets = '';
+    for (const b of context.blocks) {
+      if (!inView(b.x, b.y, Math.max(b.w, b.d))) continue;
+      ctxBlocks += `M${pt(b.x - b.w / 2, b.y - b.d / 2)}L${pt(b.x + b.w / 2, b.y - b.d / 2)}L${pt(b.x + b.w / 2, b.y + b.d / 2)}L${pt(b.x - b.w / 2, b.y + b.d / 2)}Z`;
+    }
+    for (const st of context.streets) ctxStreets += `M${pt(st.x0, st.y0)}L${pt(st.x1, st.y1)}`;
+    for (const t of context.trees) {
+      if (!inView(t.x, t.y, t.r)) continue;
+      const r = t.r * s;
+      ctxTrees += `M${n1(X(t.x) - r)},${n1(Y(t.y))}a${n1(r)},${n1(r)} 0 1,0 ${n1(2 * r)},0a${n1(r)},${n1(r)} 0 1,0 ${n1(-2 * r)},0`;
+    }
+    if (fitout) {
+      for (const p of context.people) {
+        const onPlane = level === 0 ? p.z === 0 : Math.abs(p.z - z) < 1;
+        if (onPlane && inView(p.x, p.y)) ctxPeople += personPath({ x: p.x, y: p.y, rot: p.x * 7.3 }, X, Y, s);
+      }
+    }
 
     /*
      * Floor detail per tower, all read from the floor data:
@@ -217,6 +347,12 @@ export default function PlanView({ model, level, sectionAxis, sectionPos }) {
 
     return (
       <>
+        <circle cx={X(0)} cy={Y(0)} r={context.ring.r * s} className="pl-ctx-ring" strokeWidth={context.ring.width * s} />
+        <path d={ctxStreets} className="pl-ctx-street" strokeWidth={context.street * s} />
+        <circle cx={X(0)} cy={Y(0)} r={context.plazaR * s} className="pl-ctx-plaza" />
+        <path d={ctxBlocks} className="pl-ctx-block" />
+        <path d={ctxTrees} className="pl-ctx-tree" />
+        <path d={ctxPeople} className="pl-person ctx" />
         <path d={poly(podium.outline2D)} className={podiumCut ? 'pl-podium is-cut' : 'pl-podium'} />
         <path d={ghosts} className="pl-ghost" />
         <path d={ghostAxes} className="pl-ghost-axis" />
@@ -241,6 +377,14 @@ export default function PlanView({ model, level, sectionAxis, sectionPos }) {
         <path d={liftX} className="pl-core-line" />
         <path d={treads} className="pl-core-line" />
         <path d={hatch} className="pl-core-line faint" />
+        <path d={fitWalls} className="pl-wall" />
+        <path d={furniture} className="pl-furn" />
+        <path d={figures} className="pl-person" />
+        {roomLabels.map((r) => (
+          <text key={r.key} x={r.x} y={r.y} className="svg-label room" textAnchor="middle">
+            {r.text}
+          </text>
+        ))}
         {tags.map((t) => (
           <text key={t.key} x={t.x} y={t.y} className="svg-label tag" textAnchor="middle">
             {t.lines.map((line, i) => (
@@ -302,7 +446,7 @@ export default function PlanView({ model, level, sectionAxis, sectionPos }) {
         </g>
       </>
     );
-  }, [model, level, sectionAxis, sectionPos, w, h]);
+  }, [model, level, sectionAxis, sectionPos, focus, w, h]);
 
   return (
     <div className="svg-host" ref={hostRef}>

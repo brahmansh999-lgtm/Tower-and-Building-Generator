@@ -95,6 +95,35 @@ button {
   color: var(--dim);
 }
 
+.focus {
+  display: flex;
+  gap: 2px;
+}
+.focus-btn {
+  min-width: 26px;
+  height: 18px;
+  padding: 0 6px;
+  background: transparent;
+  border: 1px solid var(--rule);
+  font-size: 8.5px;
+  letter-spacing: 0.16em;
+  color: var(--dim);
+  cursor: pointer;
+}
+.focus-btn:hover {
+  color: var(--fg);
+}
+.focus-btn.is-on {
+  background: var(--fg);
+  border-color: var(--fg);
+  color: #000;
+}
+@media (pointer: coarse) {
+  .focus-btn {
+    height: 26px;
+    min-width: 34px;
+  }
+}
 .panel-body {
   position: relative;
   flex: 1;
@@ -461,6 +490,55 @@ input[type='range']:hover::-moz-range-thumb {
 }
 .pl-core-line.faint {
   stroke: rgba(255, 255, 255, 0.3);
+}
+.pl-wall {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.85);
+  stroke-width: 1.6;
+  stroke-linecap: square;
+}
+.pl-furn {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.5);
+  stroke-width: 0.6;
+  stroke-linejoin: round;
+}
+.pl-person {
+  fill: rgba(255, 179, 71, 0.85);
+  stroke: none;
+}
+.pl-person.ctx {
+  fill: rgba(255, 179, 71, 0.6);
+}
+.svg-label.room {
+  fill: rgba(255, 255, 255, 0.45);
+  font-size: 7px;
+  letter-spacing: 0.14em;
+}
+.pl-ctx-street {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.045);
+  stroke-linecap: butt;
+}
+.pl-ctx-ring {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.045);
+}
+.pl-ctx-plaza {
+  fill: rgba(255, 255, 255, 0.025);
+  stroke: rgba(255, 255, 255, 0.18);
+  stroke-width: 0.8;
+  stroke-dasharray: 2 4;
+}
+.pl-ctx-block {
+  fill: rgba(255, 255, 255, 0.06);
+  stroke: rgba(255, 255, 255, 0.28);
+  stroke-width: 0.7;
+}
+.pl-ctx-tree {
+  fill: rgba(140, 170, 130, 0.08);
+  stroke: rgba(160, 190, 150, 0.35);
+  stroke-width: 0.6;
 }
 .pl-roof-below {
   fill: rgba(255, 255, 255, 0.04);
