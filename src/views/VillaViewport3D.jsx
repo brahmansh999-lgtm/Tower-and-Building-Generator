@@ -41,6 +41,12 @@ const FURN_H = {
   plant: 1.1,
   car: 1.45,
   lounger: 0.4,
+  tub: 0.58,
+  wc: 0.42,
+  vanity: 0.88,
+  shower: 0.12,
+  appliance: 0.88,
+  rug: 0.015,
 };
 
 /**

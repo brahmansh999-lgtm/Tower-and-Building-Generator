@@ -94,6 +94,22 @@ export function furniturePath(it, X, Y, s) {
       }
       return p;
     }
+    case 'tub':
+      return R(0, 0, w, d) + R(0, 0, w - 0.24, d - 0.24) + C(w / 2 - 0.3, 0, 0.05);
+    case 'wc':
+      return R(0, -d / 2 + 0.1, w, 0.2) + C(0, 0.12, Math.min(w, d) / 2 - 0.02);
+    case 'vanity': {
+      const n = w > 1.4 ? 2 : 1;
+      let p = R(0, 0, w, d);
+      for (let k = 0; k < n; k++) p += C(-w / 2 + (w * (k + 0.5)) / n, 0, 0.17);
+      return p;
+    }
+    case 'shower':
+      return R(0, 0, w, d) + L(-w / 2, -d / 2, w / 2, d / 2) + L(-w / 2, d / 2, w / 2, -d / 2) + C(0, 0, 0.06);
+    case 'appliance':
+      return R(0, 0, w, d) + C(0, 0, Math.min(w, d) / 2 - 0.1);
+    case 'rug':
+      return R(0, 0, w, d) + R(0, 0, w - 0.25, d - 0.25);
     case 'void':
       return R(0, 0, w, d) + L(-w / 2, -d / 2, w / 2, d / 2) + L(-w / 2, d / 2, w / 2, -d / 2);
     case 'counter':

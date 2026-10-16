@@ -818,7 +818,7 @@ input[type='range']:hover::-moz-range-thumb {
 
 .opt-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 6px;
   margin-top: 6px;
 }
@@ -986,6 +986,153 @@ input[type='range']:hover::-moz-range-thumb {
     transform: none;
   }
   .opt-grid {
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(6, 1fr);
+  }
+}
+
+/* villa room zones */
+.vl-zone {
+  stroke: none;
+}
+.vl-zone.public {
+  fill: rgba(255, 179, 71, 0.07);
+}
+.vl-zone.private {
+  fill: rgba(79, 227, 255, 0.06);
+}
+.vl-zone.service {
+  fill: rgba(255, 255, 255, 0.045);
+}
+.vl-zone.circulation {
+  fill: rgba(255, 255, 255, 0.015);
+}
+
+/* ---------- start screen ---------- */
+
+.landing {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 40px;
+  padding: 48px 16px;
+  background: #000;
+  text-transform: uppercase;
+}
+.landing-head {
+  text-align: center;
+}
+.landing-head .title {
+  font-size: 16px;
+}
+.landing-head .subtitle {
+  margin-top: 8px;
+}
+.landing-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 360px));
+  gap: 24px;
+  width: 100%;
+  justify-content: center;
+}
+.landing-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 22px 22px 24px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--rule);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+.landing-card:hover,
+.landing-card:focus-visible {
+  border-color: var(--fg);
+  background: rgba(255, 255, 255, 0.05);
+  outline: none;
+}
+.landing-card .art {
+  width: 100%;
+  height: auto;
+  max-height: 230px;
+  margin-bottom: 8px;
+}
+.card-kicker {
+  font-size: 9px;
+  letter-spacing: 0.3em;
+  color: var(--cyan);
+}
+.card-title {
+  font-size: 14px;
+  letter-spacing: 0.32em;
+  color: var(--fg);
+}
+.card-text {
+  font-size: 10px;
+  line-height: 1.7;
+  letter-spacing: 0.06em;
+  text-transform: none;
+  color: var(--dim);
+}
+.card-cta {
+  margin-top: 6px;
+  font-size: 9.5px;
+  letter-spacing: 0.26em;
+  color: var(--amber);
+}
+.art-line {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.55);
+  stroke-width: 0.8;
+}
+.art-line.strong {
+  stroke: #fff;
+  stroke-width: 1.4;
+}
+.art-ground {
+  stroke: rgba(255, 255, 255, 0.4);
+  stroke-width: 1;
+}
+.art-accent {
+  fill: rgba(255, 179, 71, 0.35);
+  stroke: var(--amber);
+  stroke-width: 0.8;
+}
+.art-plot {
+  fill: rgba(110, 140, 100, 0.06);
+  stroke: rgba(255, 255, 255, 0.35);
+  stroke-width: 0.8;
+  stroke-dasharray: 4 3;
+}
+.art-fill {
+  fill: rgba(255, 255, 255, 0.1);
+  stroke: rgba(255, 255, 255, 0.7);
+  stroke-width: 1;
+}
+.art-pool {
+  fill: rgba(79, 190, 220, 0.25);
+  stroke: rgba(120, 210, 235, 0.8);
+  stroke-width: 0.8;
+}
+.tab.home {
+  color: var(--cyan);
+}
+.opt-name {
+  font-size: 6.5px;
+  letter-spacing: 0.1em;
+  text-align: center;
+  line-height: 1.3;
+}
+
+@media (max-width: 760px) {
+  .landing-cards {
+    grid-template-columns: minmax(0, 420px);
+  }
+  .landing {
+    justify-content: flex-start;
   }
 }

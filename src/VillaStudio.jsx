@@ -25,8 +25,9 @@ export default function VillaStudio({ active }) {
   const [cuts, setCuts] = useState({ level: 0, frame: 'house', sectionPos: -10, axis: 'x', cut3D: false });
   const onCuts = useCallback((k, v) => setCuts((c) => ({ ...c, [k]: v })), []);
 
-  const options = useMemo(() => VILLA_OPTIONS.map((o) => generateVilla({ option: o.id, gfa })), [gfa]);
-  const villa = options.find((v) => v.option.id === option) || options[0];
+  // Board thumbnails use the fast path (no rooms); the selected option is fully laid out.
+  const options = useMemo(() => VILLA_OPTIONS.map((o) => generateVilla({ option: o.id, gfa, layout: false })), [gfa]);
+  const villa = useMemo(() => generateVilla({ option, gfa }), [option, gfa]);
 
   const half = (cuts.axis === 'x' ? PLOT.d : PLOT.w) / 2;
   const sectionPos = (cuts.sectionPos / 100) * half;

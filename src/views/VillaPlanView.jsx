@@ -131,6 +131,10 @@ export default function VillaPlanView({ villa, level, frame, sectionAxis, sectio
 
     // Room labels with areas
     // Labels run along each room's long direction (kept upright).
+    // Room fills by zone: living, private, service, circulation.
+    const zoneFill = { public: '', private: '', service: '', circulation: '' };
+    for (const r of L.rooms) zoneFill[r.zone] += poly(r.poly);
+
     const labels = L.rooms
       .filter((r) => r.area > 1)
       .map((r) => {
@@ -184,6 +188,9 @@ export default function VillaPlanView({ villa, level, frame, sectionAxis, sectio
         {villa.canopy && <path d={poly(villa.canopy.outline)} className="vl-canopy" />}
 
         <path d={poly(L.outline) + poly(L.hole)} className="vl-floor" fillRule="evenodd" />
+        {Object.entries(zoneFill).map(([zone, d]) => (
+          <path key={zone} d={d} className={`vl-zone ${zone}`} />
+        ))}
         <path d={glassIn} className="vl-glass" />
         <path d={poly(L.outline) + poly(L.hole)} className="vl-ext" strokeWidth={Math.max(2, 0.3 * s)} />
         <path d={mullions} className="vl-mullion" />

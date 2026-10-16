@@ -4,7 +4,9 @@ A browser-based parametric configurator for one tower typology: twisted, swaying
 
 Built with React, Vite and Three.js. Everything runs in the browser; there is no backend.
 
-A second **Villas** tab generates seven residential villa options inspired by Zaha Hadid's fluid language (Ribbon, Petal, Wave, Dunes, Crescent, Loop, Shell). Every option sits on the same 64 × 44 m plot with the same road, context, two-level programme and gross floor area; only the architecture changes. Each option comes with a 3D model, furnished plans and a section. Link straight to one with `#villas/3`.
+The app opens on a start screen where you choose to design a tower or a villa; the tabs at the top switch between the two studios at any time.
+
+The **Villas** studio generates twelve residential villa options inspired by Zaha Hadid's fluid language (Ribbon, Petal, Wave, Dunes, Crescent, Loop, Shell, Twin Pod, Swirl, Cascade, Flux, Lens). Every option sits on the same 64 × 44 m plot with the same road, context, two-level programme and gross floor area; only the architecture changes. Each option is laid out as a designed plan — a curved hall with service rooms on the road side, open-plan living facing the garden, and en-suite bedroom suites — with a 3D model, furnished plans and a section. Link straight to one with `#villas/3`.
 
 ## Run
 

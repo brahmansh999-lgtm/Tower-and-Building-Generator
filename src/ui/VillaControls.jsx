@@ -10,8 +10,8 @@ const flatPath = (p, X, Y) => {
 
 /** Mini plan of one option: plot, ground floor (filled), first floor (outline), pool. */
 function OptionThumb({ villa }) {
-  const W = 84;
-  const H = 58;
+  const W = 60;
+  const H = 42;
   const s = Math.min(W / villa.plot.w, H / villa.plot.d);
   const X = (x) => W / 2 + x * s;
   const Y = (y) => H / 2 - y * s;
