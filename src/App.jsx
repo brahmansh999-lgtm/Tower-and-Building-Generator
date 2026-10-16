@@ -5,7 +5,7 @@ import PlanView from './views/PlanView.jsx';
 import SectionView from './views/SectionView.jsx';
 import Controls from './ui/Controls.jsx';
 
-const INITIAL_FORM = { floors: 84, width: 36, sway: 14, twist: 120, towers: 2, bridges: 4, mode: 'adjacent' };
+const INITIAL_FORM = { floors: 84, width: 36, sway: 14, twist: 120, towers: 2, bridges: 2, mode: 'adjacent' };
 const INITIAL_CUTS = { planLevel: 48, sectionPos: 0, axis: 'x', cut3D: false };
 
 /**
