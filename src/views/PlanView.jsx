@@ -32,7 +32,7 @@ const n1 = (v) => v.toFixed(1);
  * (width w), v perpendicular (depth d), centred on (x, y). R() is a rectangle
  * and C() a circle in that frame; both return SVG path data in screen space.
  */
-function furniturePath(it, X, Y, s) {
+export function furniturePath(it, X, Y, s) {
   const c = Math.cos(it.rot);
   const sn = Math.sin(it.rot);
   const P = (u, v) => `${n1(X(it.x + u * c - v * sn))},${n1(Y(it.y + u * sn + v * c))}`;
@@ -54,8 +54,48 @@ function furniturePath(it, X, Y, s) {
     case 'coffee':
     case 'reception':
       return R(0, 0, w, d) + (it.type === 'reception' ? R(0, 0, w - 0.4, d - 0.5) : '');
-    case 'dining':
-      return R(0, 0, w, d) + [-w / 4, w / 4].map((u) => R(u, d / 2 + 0.3, 0.44, 0.4) + R(u, -d / 2 - 0.3, 0.44, 0.4)).join('');
+    case 'dining': {
+      const n = Math.max(2, Math.floor(w / 0.8));
+      let p = R(0, 0, w, d);
+      for (let k = 0; k < n; k++) {
+        const u = -w / 2 + (w * (k + 0.5)) / n;
+        p += R(u, d / 2 + 0.3, 0.44, 0.4) + R(u, -d / 2 - 0.3, 0.44, 0.4);
+      }
+      return p;
+    }
+    case 'island':
+      return R(0, 0, w, d) + C(-w / 4, 0, 0.22) + R(w / 5, 0, w / 3, d - 0.35);
+    case 'car':
+      return R(0, 0, w, d) + R(0, d * 0.05, w - 0.35, d * 0.42) + L(-w / 2 + 0.2, -d / 2 + 0.6, w / 2 - 0.2, -d / 2 + 0.6);
+    case 'wardrobe':
+      return R(0, 0, w, d) + L(-w / 2, 0, w / 2, 0) + [-w / 4, 0, w / 4].map((u) => L(u, -d / 2, u, d / 2)).join('');
+    case 'desk':
+      return R(0, 0, w, d) + C(0, -d / 2 - 0.42, 0.28) + R(w / 2 - 0.3, 0, 0.45, 0.32);
+    case 'armchair':
+      return R(0, 0, w, d) + R(0, d / 2 - 0.12, w, 0.24);
+    case 'tv':
+      return R(0, 0, w, d) + L(-w / 2 + 0.2, 0, w / 2 - 0.2, 0);
+    case 'bench':
+      return R(0, 0, w, d);
+    case 'lounger':
+      return R(0, 0, w, d) + R(0, d / 2 - 0.3, w, 0.6) + C(w / 2 + 0.35, 0, 0.22);
+    case 'stair': {
+      // straight flight along v: treads every 0.28 m, arrow "up"
+      let p = R(0, 0, w, d);
+      for (let v = -d / 2 + 0.28; v < d / 2; v += 0.28) p += L(-w / 2, v, w / 2, v);
+      return p + L(0, -d / 2 + 0.2, 0, d / 2 - 0.3) + L(-0.2, d / 2 - 0.55, 0, d / 2 - 0.3) + L(0.2, d / 2 - 0.55, 0, d / 2 - 0.3);
+    }
+    case 'spiral': {
+      const r = w / 2;
+      let p = C(0, 0, r) + C(0, 0, 0.18);
+      for (let k = 0; k < 14; k++) {
+        const a = (k / 14) * Math.PI * 1.75;
+        p += L(Math.cos(a) * 0.18, Math.sin(a) * 0.18, Math.cos(a) * r, Math.sin(a) * r);
+      }
+      return p;
+    }
+    case 'void':
+      return R(0, 0, w, d) + L(-w / 2, -d / 2, w / 2, d / 2) + L(-w / 2, d / 2, w / 2, -d / 2);
     case 'counter':
       return R(0, 0, w, d) + C(w / 4, 0, 0.2) + C(-w / 4, -0.12, 0.1) + C(-w / 4 + 0.3, 0.12, 0.1);
     case 'bathroom':
@@ -83,7 +123,7 @@ function furniturePath(it, X, Y, s) {
 }
 
 /** Plan-view person: head + shoulders, ~0.55 m across. */
-function personPath(p, X, Y, s) {
+export function personPath(p, X, Y, s) {
   const it = { x: p.x, y: p.y, rot: p.rot, w: 0.55, d: 0.3, type: 'person' };
   const r = Math.max(1, 0.2 * s);
   return furniturePath(it, X, Y, s) + `M${n1(X(p.x) - r)},${n1(Y(p.y))}a${n1(r)},${n1(r)} 0 1,0 ${n1(2 * r)},0a${n1(r)},${n1(r)} 0 1,0 ${n1(-2 * r)},0`;

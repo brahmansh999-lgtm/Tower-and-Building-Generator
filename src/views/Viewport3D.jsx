@@ -17,8 +17,8 @@ const SUN = new THREE.Vector3(0.15, -0.85, 0.5).normalize();
 const FILL = new THREE.Vector3(-0.6, 0.55, 0.15).normalize();
 
 // Display-space (sRGB) colours, converted to linear once for vertex colours.
-const toLinear = (c) => c.map((v) => Math.pow(v, 2.2));
-const pal = (dark, lit) => ({ dark: toLinear(dark), lit: toLinear(lit) });
+export const toLinear = (c) => c.map((v) => Math.pow(v, 2.2));
+export const pal = (dark, lit) => ({ dark: toLinear(dark), lit: toLinear(lit) });
 const PALETTE = {
   glass: pal([0.05, 0.06, 0.075], [0.4, 0.46, 0.53]),
   slab: pal([0.07, 0.075, 0.085], [0.52, 0.55, 0.59]),
@@ -31,14 +31,14 @@ const PALETTE = {
 };
 
 /** Light intensity 0..1 for a unit normal. */
-function lightAt(nx, ny, nz) {
+export function lightAt(nx, ny, nz) {
   const sun = (nx * SUN.x + ny * SUN.y + nz * SUN.z + 0.12) / 1.12;
   const fill = nx * FILL.x + ny * FILL.y + nz * FILL.z;
   const k = Math.max(0, sun) * 0.9 + Math.max(0, fill) * 0.14 + Math.max(0, nz) * 0.08;
   return k > 1 ? 1 : k;
 }
 
-function writeColor(out, o, k, p) {
+export function writeColor(out, o, k, p) {
   out[o] = p.dark[0] + (p.lit[0] - p.dark[0]) * k;
   out[o + 1] = p.dark[1] + (p.lit[1] - p.dark[1]) * k;
   out[o + 2] = p.dark[2] + (p.lit[2] - p.dark[2]) * k;
@@ -577,10 +577,11 @@ function roadsGeometry(context) {
     tri(a, c, d, color, z);
   };
   const seg = 128;
+  // Plaza and ring road are optional (the villa context has neither).
   const { plazaR, ring } = context;
-  const r0 = ring.r - ring.width / 2;
-  const r1 = ring.r + ring.width / 2;
-  for (let i = 0; i < seg; i++) {
+  const r0 = ring ? ring.r - ring.width / 2 : 0;
+  const r1 = ring ? ring.r + ring.width / 2 : 0;
+  for (let i = 0; ring && i < seg; i++) {
     const a0 = (i / seg) * Math.PI * 2;
     const a1 = ((i + 1) / seg) * Math.PI * 2;
     const c0 = [Math.cos(a0), Math.sin(a0)];
@@ -690,7 +691,7 @@ function mergeSimple(geoms) {
 }
 
 /** Rebuild the context group (only when the cached context object changes). */
-function buildContextGroup(ctx, context) {
+export function buildContextGroup(ctx, context) {
   const group = ctx.contextGroup;
   for (const child of [...group.children]) {
     group.remove(child);
@@ -726,7 +727,7 @@ function buildContextGroup(ctx, context) {
   }
 }
 
-function makeQuad(fillMat, edgeMat) {
+export function makeQuad(fillMat, edgeMat) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(12), 3));
   g.setIndex([0, 1, 2, 0, 2, 3]);
@@ -741,7 +742,7 @@ function makeQuad(fillMat, edgeMat) {
   return { mesh, edge };
 }
 
-function setQuad(quad, corners) {
+export function setQuad(quad, corners) {
   for (const obj of [quad.mesh, quad.edge]) {
     const a = obj.geometry.attributes.position;
     corners.forEach((c, i) => a.setXYZ(i, c[0], c[1], c[2]));
@@ -871,9 +872,11 @@ function updateCuts(ctx, model, planLevel, axis, pos, cut3D) {
   ctx.renderer.clippingPlanes = cut3D ? [ctx.clipPlane] : [];
 }
 
-export default function Viewport3D({ model, planLevel, sectionAxis, sectionPos, cut3D }) {
+export default function Viewport3D({ model, planLevel, sectionAxis, sectionPos, cut3D, active = true }) {
   const mountRef = useRef(null);
   const ctxRef = useRef(null);
+  const activeRef = useRef(active);
+  activeRef.current = active;
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -969,6 +972,7 @@ export default function Viewport3D({ model, planLevel, sectionAxis, sectionPos, 
     let raf = 0;
     const tick = () => {
       raf = requestAnimationFrame(tick);
+      if (!activeRef.current) return;
       controls.update();
       // Fog tracks the orbit distance so depth fades the same at any zoom.
       const d = camera.position.distanceTo(controls.target);

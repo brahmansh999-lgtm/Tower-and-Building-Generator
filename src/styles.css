@@ -774,3 +774,218 @@ input[type='range']:hover::-moz-range-thumb {
     height: 14px;
   }
 }
+
+/* ---------- studio tabs ---------- */
+
+.app.is-hidden {
+  display: none;
+}
+
+.tabs {
+  position: fixed;
+  top: 12px;
+  left: 32.5vw;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  border: 1px solid var(--rule);
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.tab {
+  height: 26px;
+  padding: 0 16px;
+  background: transparent;
+  border: 0;
+  font-size: 9.5px;
+  letter-spacing: 0.3em;
+  color: var(--dim);
+  cursor: pointer;
+}
+.tab + .tab {
+  border-left: 1px solid var(--rule);
+}
+.tab:hover {
+  color: var(--fg);
+}
+.tab.is-on {
+  background: var(--fg);
+  color: #000;
+}
+
+/* ---------- villa options board ---------- */
+
+.opt-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-top: 6px;
+}
+.opt-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 2px 5px;
+  background: transparent;
+  border: 1px solid var(--rule);
+  cursor: pointer;
+}
+.opt-card:hover {
+  border-color: var(--faint);
+}
+.opt-card.is-on {
+  border-color: var(--fg);
+  background: rgba(255, 255, 255, 0.06);
+}
+.opt-name {
+  font-size: 7.5px;
+  letter-spacing: 0.14em;
+  color: var(--dim);
+}
+.opt-card.is-on .opt-name {
+  color: var(--fg);
+}
+.opt-thumb {
+  display: block;
+}
+.opt-plot {
+  fill: rgba(120, 150, 110, 0.06);
+  stroke: rgba(255, 255, 255, 0.25);
+  stroke-width: 0.6;
+}
+.opt-l0 {
+  fill: rgba(255, 255, 255, 0.55);
+}
+.opt-l1 {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 0.9;
+}
+.opt-pool {
+  fill: rgba(79, 190, 220, 0.55);
+}
+.opt-canopy {
+  fill: none;
+  stroke: rgba(255, 179, 71, 0.8);
+  stroke-width: 0.7;
+  stroke-dasharray: 2 1.5;
+}
+
+/* ---------- villa plan ---------- */
+
+.vl-plot {
+  fill: rgba(110, 140, 100, 0.07);
+  stroke: rgba(255, 255, 255, 0.7);
+  stroke-width: 1.4;
+}
+.vl-setback {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.22);
+  stroke-width: 0.8;
+  stroke-dasharray: 6 4;
+}
+.vl-drive {
+  fill: rgba(255, 255, 255, 0.07);
+  stroke: rgba(255, 255, 255, 0.25);
+  stroke-width: 0.6;
+}
+.vl-deck {
+  fill: rgba(190, 140, 90, 0.12);
+  stroke: rgba(210, 160, 110, 0.35);
+  stroke-width: 0.6;
+}
+.vl-pool {
+  fill: rgba(79, 190, 220, 0.22);
+  stroke: rgba(120, 210, 235, 0.8);
+  stroke-width: 1;
+}
+.vl-coping {
+  fill: rgba(255, 255, 255, 0.08);
+  stroke: rgba(255, 255, 255, 0.4);
+  stroke-width: 0.6;
+}
+.vl-other {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.42);
+  stroke-width: 1;
+  stroke-dasharray: 6 3;
+}
+.vl-canopy {
+  fill: none;
+  stroke: rgba(255, 179, 71, 0.55);
+  stroke-width: 1;
+  stroke-dasharray: 10 3 2 3;
+}
+.vl-floor {
+  fill: rgba(255, 255, 255, 0.05);
+}
+.vl-ext {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.92);
+  stroke-linejoin: round;
+}
+.vl-glass {
+  fill: none;
+  stroke: rgba(150, 200, 230, 0.6);
+  stroke-width: 0.7;
+}
+.vl-mullion {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.6);
+  stroke-width: 0.8;
+}
+.vl-door {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.55);
+  stroke-width: 0.7;
+}
+.vl-stair {
+  fill: none;
+  stroke: rgba(79, 227, 255, 0.75);
+  stroke-width: 0.7;
+}
+.svg-label.room .area {
+  fill: rgba(255, 255, 255, 0.32);
+}
+
+/* ---------- villa section ---------- */
+
+.vs-house {
+  fill: rgba(255, 255, 255, 0.035);
+  stroke: rgba(255, 255, 255, 0.16);
+  stroke-width: 0.8;
+}
+.vs-tree {
+  fill: rgba(140, 170, 130, 0.06);
+  stroke: rgba(160, 190, 150, 0.3);
+  stroke-width: 0.7;
+}
+.vs-water {
+  fill: rgba(79, 190, 220, 0.3);
+  stroke: rgba(120, 210, 235, 0.7);
+  stroke-width: 0.8;
+}
+.vs-partition {
+  fill: rgba(255, 255, 255, 0.55);
+}
+.vs-glass {
+  fill: none;
+  stroke: rgba(150, 200, 230, 0.8);
+  stroke-width: 0.7;
+}
+.vs-figure {
+  fill: rgba(255, 179, 71, 0.85);
+}
+
+@media (max-width: 900px) {
+  .tabs {
+    left: auto;
+    right: 12px;
+    transform: none;
+  }
+  .opt-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}

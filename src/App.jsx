@@ -4,6 +4,7 @@ import Viewport3D from './views/Viewport3D.jsx';
 import PlanView from './views/PlanView.jsx';
 import SectionView from './views/SectionView.jsx';
 import Controls from './ui/Controls.jsx';
+import VillaStudio from './VillaStudio.jsx';
 
 const INITIAL_FORM = { floors: 84, width: 36, sway: 14, twist: 120, towers: 2, bridges: 2, mode: 'adjacent' };
 const INITIAL_CUTS = { planLevel: 48, sectionPos: 0, axis: 'x', cut3D: false };
@@ -40,7 +41,36 @@ function useCoalesced(value, ms) {
 
 const fmt = (v) => Math.round(v).toLocaleString('en-US');
 
+/**
+ * Two studios behind one tab bar. Both stay mounted so each keeps its state;
+ * the hidden one is display:none and its renderer skips frames.
+ */
 export default function App() {
+  // The URL hash selects the tab (#towers, #villas, #villas/3) so views can be linked.
+  const [tab, setTabState] = useState(() => (window.location.hash.startsWith('#villas') ? 'villas' : 'towers'));
+  const setTab = (t) => {
+    setTabState(t);
+    window.history.replaceState(null, '', `#${t}`);
+  };
+  return (
+    <>
+      <TowerStudio active={tab === 'towers'} />
+      <VillaStudio active={tab === 'villas'} />
+      <nav className="tabs">
+        {[
+          ['towers', 'TOWERS'],
+          ['villas', 'VILLAS'],
+        ].map(([id, label]) => (
+          <button key={id} type="button" className={tab === id ? 'tab is-on' : 'tab'} onClick={() => setTab(id)}>
+            {label}
+          </button>
+        ))}
+      </nav>
+    </>
+  );
+}
+
+function TowerStudio({ active }) {
   const [form, setForm] = useState(INITIAL_FORM);
   const [cuts, setCuts] = useState(INITIAL_CUTS);
   const formD = useCoalesced(form, 16);
@@ -67,7 +97,7 @@ export default function App() {
   const modeName = { adjacent: 'PAIRS', all: 'ALL-TO-ALL', chain: 'CHAIN' }[model.params.mode];
 
   return (
-    <div className="app">
+    <div className={active ? 'app' : 'app is-hidden'}>
       <main className="stage">
         <Viewport3D
           model={model}
@@ -75,6 +105,7 @@ export default function App() {
           sectionAxis={cutsD.axis}
           sectionPos={sectionPos}
           cut3D={cutsD.cut3D}
+          active={active}
         />
 
         <header className="readout">
