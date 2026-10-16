@@ -17,13 +17,17 @@
  *     x, y, sx, sy,                 base position and sway axis
  *     phase, twistDir,              ±1 alternating between neighbours
  *     finCount,
- *     floors: [{ index, z, t, cx, cy, rot, r, area,
- *                points2D }],       points2D = Float32Array [x0,y0,x1,y1,…]
+ *     coreRot, coreZones: [{ hx, hy, area, rooms, lifts }],  core per lift zone
+ *     mepFloors: [floor index],     mechanical floors at zone boundaries
+ *     floors: [{ index, z, t, cx, cy, rot, r, area, nia, zone, mep,
+ *                points2D,          Float32Array [x0,y0,x1,y1,…] facade
+ *                core2D,            Float32Array 4 core corners
+ *                columns2D }],      Float32Array perimeter column centres
  *     fins:   [Float32Array]        polyline3D = [x0,y0,z0,x1,y1,z1,…]
  *   }],
  *   bridges: [{ fromTower, toTower, level, storeys, kind, z, height, span,
  *               ux, uy, attachA, attachB, stations, outline2D, zMin, zMax }],
- *   podium: { outline2D, height, floors, area },
+ *   podium: { outline2D, height, floors, area, basementLevels, basementDepth },
  *   bounds: { minX, maxX, minY, maxY, maxZ },
  *   stats:  { gfa, floors, totalFloors, height, towers, bridges, sway, twist, finCount }
  * }
@@ -157,6 +161,65 @@ function shoelace(p) {
 /** Fin count grows with plate size: 24 fins at 20 m → 48 fins at 60 m (even). */
 function finCountFor(width) {
   return 2 * Math.round((24 + ((clamp(width, 20, 60) - 20) / 40) * 24) / 2);
+}
+
+/* ---------------------------------------------------------------------------
+ * Core
+ * ------------------------------------------------------------------------- */
+export const CORE_WALL = 0.45; //   core wall thickness (m)
+export const CORE_OVERRUN = 4.5; // lift overrun above the roof (m)
+export const PARAPET = 1.4; //     parapet above the roof plate (m)
+const ZONE_STEP = [1, 0.82, 0.66]; // core length per lift zone (banks drop off)
+
+/**
+ * Lift zones: towers over 80 floors get 3 zones, over 45 get 2, else 1. The
+ * floor at each zone boundary is a mechanical (MEP / refuge) floor.
+ */
+function zoneBoundaries(F) {
+  const n = F > 80 ? 3 : F > 45 ? 2 : 1;
+  const b = [];
+  for (let k = 1; k < n; k++) b.push(Math.round((F * k) / n));
+  return b;
+}
+
+/**
+ * Core interior in core-local coordinates (x along the core's long axis):
+ *   stair | lift row (top)    | stair
+ *         | lift lobby        |
+ *         | lift row (bottom) |
+ * Lifts are 2.5 m cars on a 2.7 m pitch; with 3+ cars per row the last cell
+ * of each row becomes a service riser. A shorter core (upper zones) simply
+ * fits fewer cars — the lift banks that have dropped off.
+ */
+function coreLayout(hx, hy) {
+  const tw = CORE_WALL;
+  const rooms = [];
+  const stairW = Math.min(3, 2 * hx * 0.22);
+  const ix0 = -hx + tw;
+  const ix1 = hx - tw;
+  const iy0 = -hy + tw;
+  const iy1 = hy - tw;
+  rooms.push({ type: 'stair', x0: ix0, y0: iy0, x1: ix0 + stairW, y1: iy1 });
+  rooms.push({ type: 'stair', x0: ix1 - stairW, y0: iy0, x1: ix1, y1: iy1 });
+  const x0 = ix0 + stairW + tw;
+  const x1 = ix1 - stairW - tw;
+  const lobby = Math.min(1.5, iy1 * 0.32);
+  rooms.push({ type: 'lobby', x0, y0: -lobby, x1, y1: lobby });
+  const n = Math.max(1, Math.floor((x1 - x0 + 0.2) / 2.7));
+  const w = (x1 - x0 - 0.2 * (n - 1)) / n;
+  let lifts = 0;
+  for (const [ya, yb] of [
+    [lobby + tw, iy1],
+    [iy0, -lobby - tw],
+  ]) {
+    for (let k = 0; k < n; k++) {
+      const cx0 = x0 + k * (w + 0.2);
+      const type = n >= 3 && k === n - 1 ? 'riser' : 'lift';
+      if (type === 'lift') lifts++;
+      rooms.push({ type, x0: cx0, y0: ya, x1: cx0 + w, y1: yb });
+    }
+  }
+  return { rooms, lifts };
 }
 
 /** Place the unit plate: scale by r, rotate by rot, translate to (cx, cy). */
@@ -453,6 +516,9 @@ function buildPodium(towers, width, floors) {
     floors: podiumFloors,
     height: podiumFloors * PODIUM_FLOOR_HEIGHT,
     area: Math.abs(shoelace(outline2D)),
+    // Basement (parking / plant) under the podium footprint.
+    basementLevels: 2,
+    basementDepth: 2 * 4.0,
   };
 }
 
@@ -539,6 +605,39 @@ export function generateTower(params = {}) {
       };
     };
 
+    /*
+     * CORE. Its orientation is fixed (rot0) — the plates twist around it — but
+     * it follows the sway, so it is an inclined core that stays inside every
+     * plate. A rotating superellipse always contains the circle of radius
+     * aspect·r (its minor semi-axis), so each zone's core is sized so its
+     * half-diagonal ≤ 0.6·aspect·r on the smallest plate of that zone, leaving
+     * a lease depth of ≥ 40 % of that radius. Proportion hx = 1.3·hy; upper
+     * zones are shorter (ZONE_STEP) as lift banks drop off.
+     */
+    const boundaries = zoneBoundaries(tFloors);
+    const zoneOf = (f) => boundaries.filter((b) => f > b).length;
+    const zoneLimit = boundaries.map(() => Infinity).concat([Infinity]);
+    for (let f = 0; f < tFloors; f++) {
+      const r = baseRadius * radiusFactor(f / (tFloors - 1), ch);
+      const z = zoneOf(f);
+      zoneLimit[z] = Math.min(zoneLimit[z], 0.6 * ch.aspect * r);
+    }
+    const hy0 = zoneLimit[0] / Math.hypot(1.3, 1);
+    const coreZones = zoneLimit.map((limit, z) => {
+      let hx = 1.3 * hy0 * ZONE_STEP[z];
+      let hy = hy0;
+      const k = Math.min(1, limit / Math.hypot(hx, hy));
+      hx *= k;
+      hy *= k;
+      const layout = coreLayout(hx, hy);
+      return { hx, hy, area: 4 * hx * hy, rooms: layout.rooms, lifts: layout.lifts };
+    });
+    const cc = Math.cos(rot0);
+    const cs = Math.sin(rot0);
+
+    // Perimeter columns: n evenly spaced plate vertices, inset 1.2 m.
+    const nCols = clamp(Math.round((Math.PI * tWidth) / 9), 8, 20);
+
     const floorList = new Array(tFloors);
     for (let f = 0; f < tFloors; f++) {
       const t = f / (tFloors - 1);
@@ -552,7 +651,46 @@ export function generateTower(params = {}) {
       // Area is invariant to rotation/translation: unit area scaled by r².
       const area = unit.area * r * r;
       gfa += area;
-      floorList[f] = { index: f, z, t, cx: fr.cx, cy: fr.cy, rot: fr.rot, r, area, points2D };
+
+      const zone = zoneOf(f);
+      const { hx, hy } = coreZones[zone];
+      const core2D = new Float32Array(8);
+      [
+        [-hx, -hy],
+        [hx, -hy],
+        [hx, hy],
+        [-hx, hy],
+      ].forEach(([lx, ly], q) => {
+        core2D[2 * q] = fr.cx + lx * cc - ly * cs;
+        core2D[2 * q + 1] = fr.cy + lx * cs + ly * cc;
+      });
+
+      const columns2D = new Float32Array(nCols * 2);
+      for (let k = 0; k < nCols; k++) {
+        const j = Math.round((k * M) / nCols) % M;
+        const px = points2D[2 * j];
+        const py = points2D[2 * j + 1];
+        const l = Math.hypot(fr.cx - px, fr.cy - py) || 1;
+        columns2D[2 * k] = px + ((fr.cx - px) / l) * 1.2;
+        columns2D[2 * k + 1] = py + ((fr.cy - py) / l) * 1.2;
+      }
+
+      floorList[f] = {
+        index: f,
+        z,
+        t,
+        cx: fr.cx,
+        cy: fr.cy,
+        rot: fr.rot,
+        r,
+        area,
+        nia: area - coreZones[zone].area,
+        zone,
+        mep: boundaries.includes(f),
+        core2D,
+        columns2D,
+        points2D,
+      };
     }
 
     // Fins: vertex k·finStride of every plate, so each rib twists and sways
@@ -582,6 +720,9 @@ export function generateTower(params = {}) {
       phase,
       twistDir,
       finCount,
+      coreRot: rot0,
+      coreZones,
+      mepFloors: boundaries,
       floors: floorList,
       fins,
     };

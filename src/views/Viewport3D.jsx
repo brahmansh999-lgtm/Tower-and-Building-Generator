@@ -1,12 +1,11 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { FLOOR_HEIGHT, BRIDGE_STATION_STRIDE } from '../geometry/generateTower.js';
+import { FLOOR_HEIGHT, BRIDGE_STATION_STRIDE, CORE_OVERRUN, PARAPET } from '../geometry/generateTower.js';
 
 const CYAN = 0x4fe3ff;
 const BRIDGE_RING = 40; // vertices around each bridge section
 const SLAB_EDGE = 0.6; //  m of opaque slab edge at the base of every floor
-const PARAPET = 1.4; //   m of parapet above the roof plate
 
 /*
  * Shading without lights: every surface is MeshBasicMaterial with vertex
@@ -25,6 +24,8 @@ const PALETTE = {
   slab: pal([0.07, 0.075, 0.085], [0.52, 0.55, 0.59]),
   fin: pal([0.05, 0.055, 0.065], [0.36, 0.39, 0.43]),
   roof: pal([0.1, 0.1, 0.1], [0.26, 0.26, 0.26]),
+  louvre: pal([0.03, 0.03, 0.035], [0.17, 0.17, 0.18]),
+  core: pal([0.12, 0.115, 0.11], [0.62, 0.6, 0.57]),
   podiumGlass: pal([0.03, 0.035, 0.04], [0.22, 0.25, 0.28]),
   podiumSlab: pal([0.1, 0.1, 0.1], [0.62, 0.61, 0.59]),
 };
@@ -74,6 +75,7 @@ function createMaterials() {
   return {
     facade: solid(),
     fins: solid(),
+    core: solid(),
     podium: solid(),
     bridge: linkMaterial(),
     slab: new THREE.MeshBasicMaterial({
@@ -198,8 +200,10 @@ function facadeData(T) {
     const zEdge = A.z + SLAB_EDGE;
     o = writeRing(positions, colors, o, A.points2D, B.points2D, 0, A.z, PALETTE.slab, M);
     o = writeRing(positions, colors, o, A.points2D, B.points2D, sEdge, zEdge, PALETTE.slab, M);
-    o = writeRing(positions, colors, o, A.points2D, B.points2D, sEdge, zEdge, PALETTE.glass, M);
-    o = writeRing(positions, colors, o, B.points2D, B.points2D, 0, B.z, PALETTE.glass, M);
+    // Mechanical floors read as a dark louvre band instead of glazing.
+    const infill = A.mep ? PALETTE.louvre : PALETTE.glass;
+    o = writeRing(positions, colors, o, A.points2D, B.points2D, sEdge, zEdge, infill, M);
+    o = writeRing(positions, colors, o, B.points2D, B.points2D, 0, B.z, infill, M);
   }
   const top = T.floors[F - 1];
   const zRoof = top.z + PARAPET;
@@ -286,6 +290,84 @@ function finData(T, depth) {
     return idx;
   };
   return { positions, colors, indexLength, makeIndex };
+}
+
+/**
+ * Core: a flat-shaded box per storey between consecutive core rectangles
+ * (inclined with the sway, stepping at zone changes), continued up through the
+ * roof as the lift overrun and capped. Each face has its own 4 vertices so the
+ * concrete reads with crisp edges.
+ */
+function coreData(T) {
+  const F = T.floors.length;
+  const top = T.floors[F - 1];
+  const levels = T.floors.map((P) => ({ c: P.core2D, z: P.z }));
+  levels.push({ c: top.core2D, z: top.z + PARAPET + CORE_OVERRUN });
+  const faces = (levels.length - 1) * 4 + 1;
+  const positions = new Float32Array(faces * 4 * 3);
+  const colors = new Float32Array(positions.length);
+  let o = 0;
+  const put = (x, y, z, k) => {
+    positions[o] = x;
+    positions[o + 1] = y;
+    positions[o + 2] = z;
+    writeColor(colors, o, k, PALETTE.core);
+    o += 3;
+  };
+  for (let l = 0; l < levels.length - 1; l++) {
+    const a = levels[l];
+    const b = levels[l + 1];
+    for (let q = 0; q < 4; q++) {
+      const q2 = (q + 1) % 4;
+      const ex = a.c[2 * q2] - a.c[2 * q];
+      const ey = a.c[2 * q2 + 1] - a.c[2 * q + 1];
+      const el = Math.hypot(ex, ey) || 1;
+      const k = lightAt(ey / el, -ex / el, 0);
+      put(a.c[2 * q], a.c[2 * q + 1], a.z, k);
+      put(a.c[2 * q2], a.c[2 * q2 + 1], a.z, k);
+      put(b.c[2 * q2], b.c[2 * q2 + 1], b.z, k);
+      put(b.c[2 * q], b.c[2 * q + 1], b.z, k);
+    }
+  }
+  const cap = levels[levels.length - 1];
+  const kUp = lightAt(0, 0, 1);
+  for (let q = 0; q < 4; q++) put(cap.c[2 * q], cap.c[2 * q + 1], cap.z, kUp);
+  const indexLength = faces * 6;
+  const makeIndex = () => {
+    const idx = new Uint32Array(indexLength);
+    for (let f = 0; f < faces; f++) {
+      const b = f * 4;
+      idx.set([b, b + 1, b + 2, b, b + 2, b + 3], f * 6);
+    }
+    return idx;
+  };
+  return { positions, colors, indexLength, makeIndex };
+}
+
+/** Roof plant screen: a louvred ring at 55 % of the roof plate, 3.2 m tall, capped. */
+function plantData(T) {
+  const top = T.floors[T.floors.length - 1];
+  const M = top.points2D.length / 2;
+  const ring = new Float32Array(M * 2);
+  for (let j = 0; j < M; j++) {
+    ring[2 * j] = top.cx + (top.points2D[2 * j] - top.cx) * 0.55;
+    ring[2 * j + 1] = top.cy + (top.points2D[2 * j + 1] - top.cy) * 0.55;
+  }
+  const z0 = top.z + PARAPET - 0.3;
+  const z1 = z0 + 3.2;
+  const positions = new Float32Array((2 * M + M + 1) * 3);
+  const colors = new Float32Array(positions.length);
+  let o = writeRing(positions, colors, 0, ring, ring, 0, z0, PALETTE.louvre, M);
+  o = writeRing(positions, colors, o, ring, ring, 0, z1, PALETTE.louvre, M);
+  const kUp = lightAt(0, 0, 1);
+  positions.set([top.cx, top.cy, z1], o);
+  writeColor(colors, o, kUp, PALETTE.roof);
+  o += 3;
+  for (let j = 0; j < M; j++, o += 3) {
+    positions.set([ring[2 * j], ring[2 * j + 1], z1], o);
+    writeColor(colors, o, kUp, PALETTE.roof);
+  }
+  return { positions, colors, indexLength: M * 6 + M * 3, makeIndex: () => bandIndex(1, M, true) };
 }
 
 /** Floor slabs (visible only when the model is cut open). */
@@ -499,8 +581,14 @@ function rebuild(ctx, model) {
     }
   }
   while (ctx.towerObjs.length < towers.length) {
-    const o = { facade: makeMesh(mats.facade), fins: makeMesh(mats.fins), slab: makeMesh(mats.slab) };
-    towerGroup.add(o.facade, o.fins, o.slab);
+    const o = {
+      facade: makeMesh(mats.facade),
+      fins: makeMesh(mats.fins),
+      slab: makeMesh(mats.slab),
+      core: makeMesh(mats.core),
+      plant: makeMesh(mats.facade),
+    };
+    towerGroup.add(o.facade, o.fins, o.slab, o.core, o.plant);
     ctx.towerObjs.push(o);
   }
   const finDepth = 0.4 + params.width * 0.008;
@@ -512,6 +600,10 @@ function rebuild(ctx, model) {
     writeGeometry(o.fins, fi.positions, fi.colors, fi.indexLength, fi.makeIndex);
     const sl = slabData(T);
     writeGeometry(o.slab, sl.positions, new Float32Array(sl.positions.length), sl.indexLength, sl.makeIndex);
+    const co = coreData(T);
+    writeGeometry(o.core, co.positions, co.colors, co.indexLength, co.makeIndex);
+    const pl = plantData(T);
+    writeGeometry(o.plant, pl.positions, pl.colors, pl.indexLength, pl.makeIndex);
   });
 
   ctx.bridgeMesh.visible = bridges.length > 0;

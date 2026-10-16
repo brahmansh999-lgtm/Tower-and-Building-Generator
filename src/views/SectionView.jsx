@@ -1,8 +1,27 @@
 import { useMemo, useRef } from 'react';
-import { FLOOR_HEIGHT, BRIDGE_STATION_STRIDE, cutPolygonAtLine } from '../geometry/generateTower.js';
+import {
+  FLOOR_HEIGHT,
+  BRIDGE_STATION_STRIDE,
+  CORE_OVERRUN,
+  PARAPET,
+  cutPolygonAtLine,
+} from '../geometry/generateTower.js';
 import { useElementSize, niceScaleLength } from './PlanView.jsx';
 
 const n1 = (v) => v.toFixed(1);
+const PLANT_H = 3.2;
+
+/** Min / max of the u-coordinate (stride 2, offset uIdx) of a flat 2D array. */
+function extentU(p, uIdx, scale = 1, cu = 0) {
+  let a = Infinity;
+  let b = -Infinity;
+  for (let j = uIdx; j < p.length; j += 2) {
+    const v = cu + (p[j] - cu) * scale;
+    if (v < a) a = v;
+    if (v > b) b = v;
+  }
+  return [a, b];
+}
 
 export default function SectionView({ model, level, sectionAxis, sectionPos }) {
   const hostRef = useRef(null);
@@ -18,95 +37,145 @@ export default function SectionView({ model, level, sectionAxis, sectionPos }) {
     const uMin = uIdx === 0 ? bounds.minX : bounds.minY;
     const uMax = uIdx === 0 ? bounds.maxX : bounds.maxY;
     const ml = 64;
-    const mr = 16;
-    const mt = 40;
+    const mr = 44; // room for the height dimension
+    const mt = 46;
     const mb = 24;
+    const zBottom = -podium.basementDepth;
+    const zTop = bounds.maxZ + PARAPET + CORE_OVERRUN + 2;
     const uSpan = Math.max(1, uMax - uMin);
-    const zSpan = Math.max(1, bounds.maxZ);
+    const zSpan = zTop - zBottom;
     const s = Math.min((w - ml - mr) / uSpan, (h - mt - mb) / zSpan);
     const uc = (uMin + uMax) / 2;
     const U = (u) => ml + (w - ml - mr) / 2 + (u - uc) * s;
-    const Z = (z) => h - mb - z * s;
+    const Z = (z) => h - mb - (z - zBottom) * s;
     const pt = (u, z) => `${n1(U(u))},${n1(Z(z))}`;
+    const rect = (u0, z0, u1, z1) => `M${pt(u0, z0)}L${pt(u1, z0)}L${pt(u1, z1)}L${pt(u0, z1)}Z`;
 
     /*
-     * Per tower:
-     *  - elevation beyond: closed outline of the plate extents along u (soft fill)
-     *  - cut poché: plates are convex, so each floor cuts to at most one
-     *    interval; contiguous runs of cut floors become one filled outline
-     *  - floor lines inside the poché, with a stronger datum every 10th floor
+     * Per tower, all from the floor data:
+     *  - elevation beyond: outline of plate extents along u, with faint floor
+     *    lines, MEP louvre bands, parapet, roof plant screen and lift overrun
+     *  - cut poché: contiguous runs of cut floors (plates are convex → one
+     *    interval per floor) become filled outlines; floor lines inside, datum
+     *    every 10th floor
+     *  - core poché: the core rectangle cut per floor, hatched, from the
+     *    basement up through the overrun
      */
     let elevation = '';
+    let beyondFloors = '';
+    let mepBands = '';
+    let roofParts = '';
     let poche = '';
     let floorLines = '';
     let datumLines = '';
+    let corePoche = '';
+    const mepLabels = [];
+    const roofLabels = [];
+
     towers.forEach((T) => {
       const lo = [];
       const hi = [];
-      let runL = [];
-      let runR = [];
-      const flush = () => {
-        if (runL.length > 1) {
-          poche += 'M' + runL.map(([u, z]) => pt(u, z)).join('L');
-          poche += 'L' + runR.reverse().map(([u, z]) => pt(u, z)).join('L') + 'Z';
+      const runs = { L: [], R: [] };
+      const coreRuns = { L: [], R: [] };
+      const flush = (r, target) => {
+        let d = '';
+        if (r.L.length > 1) {
+          d += 'M' + r.L.map(([u, z]) => pt(u, z)).join('L');
+          d += 'L' + r.R.slice().reverse().map(([u, z]) => pt(u, z)).join('L') + 'Z';
         }
-        runL = [];
-        runR = [];
+        r.L = [];
+        r.R = [];
+        return target + d;
       };
-      T.floors.forEach((F) => {
-        const p = F.points2D;
-        let a = Infinity;
-        let b = -Infinity;
-        for (let j = uIdx; j < p.length; j += 2) {
-          if (p[j] < a) a = p[j];
-          if (p[j] > b) b = p[j];
-        }
+
+      T.floors.forEach((F, f) => {
+        const [a, b] = extentU(F.points2D, uIdx);
         lo.push([a, F.z]);
         hi.push([b, F.z]);
+        if (f % 2 === 0) beyondFloors += `M${pt(a, F.z)}L${pt(b, F.z)}`;
+        if (F.mep) {
+          mepBands += rect(a, F.z, b, F.z + FLOOR_HEIGHT);
+          mepLabels.push({ key: `${T.name}${f}`, x: U(b) + 4, y: Z(F.z + FLOOR_HEIGHT / 2) + 3, text: `MEP L${f}` });
+        }
 
-        const segs = cutPolygonAtLine(p, sectionAxis, sectionPos);
+        const segs = cutPolygonAtLine(F.points2D, sectionAxis, sectionPos);
         if (segs.length) {
           const [u0, u1] = segs[0];
-          runL.push([u0, F.z]);
-          runR.push([u1, F.z]);
+          runs.L.push([u0, F.z]);
+          runs.R.push([u1, F.z]);
           const line = `M${pt(u0, F.z)}L${pt(u1, F.z)}`;
           if (F.index % 10 === 0) datumLines += line;
           else floorLines += line;
         } else {
-          flush();
+          poche = flush(runs, poche);
+        }
+
+        const cseg = cutPolygonAtLine(F.core2D, sectionAxis, sectionPos);
+        if (cseg.length) {
+          coreRuns.L.push([cseg[0][0], F.z]);
+          coreRuns.R.push([cseg[0][1], F.z]);
+        } else {
+          corePoche = flush(coreRuns, corePoche);
         }
       });
-      flush();
+
+      // Roof: parapet, plant screen, lift overrun (continuing the core).
+      const top = T.floors[T.floors.length - 1];
+      const zRoof = top.z + PARAPET;
+      const [ra, rb] = extentU(top.points2D, uIdx);
+      roofParts += rect(ra, top.z, rb, zRoof);
+      const cu = uIdx === 0 ? top.cx : top.cy;
+      const [pa, pb] = extentU(top.points2D, uIdx, 0.55, cu);
+      roofParts += rect(pa, zRoof - 0.3, pb, zRoof - 0.3 + PLANT_H);
+      const [oa, ob] = extentU(top.core2D, uIdx);
+      roofParts += rect(oa, zRoof, ob, zRoof + CORE_OVERRUN);
+      const cTop = cutPolygonAtLine(top.core2D, sectionAxis, sectionPos);
+      if (cTop.length) {
+        coreRuns.L.push([cTop[0][0], zRoof + CORE_OVERRUN]);
+        coreRuns.R.push([cTop[0][1], zRoof + CORE_OVERRUN]);
+      }
+      // Core continues into the basement.
+      if (coreRuns.L.length && coreRuns.L[0][1] === 0) {
+        coreRuns.L.unshift([coreRuns.L[0][0], zBottom]);
+        coreRuns.R.unshift([coreRuns.R[0][0], zBottom]);
+      }
+      poche = flush(runs, poche);
+      corePoche = flush(coreRuns, corePoche);
+      roofLabels.push({ key: T.name, x: U((ra + rb) / 2), y: Z(zRoof + CORE_OVERRUN) - 6, text: `${T.name} +${zRoof.toFixed(1)}` });
+
       elevation += 'M' + lo.map(([u, z]) => pt(u, z)).join('L');
       elevation += 'L' + hi.reverse().map(([u, z]) => pt(u, z)).join('L') + 'Z';
     });
 
-    // Podium cut.
+    // Podium cut + basement.
+    const [pLo, pHi] = extentU(podium.outline2D, uIdx);
     const podiumRects = cutPolygonAtLine(podium.outline2D, sectionAxis, sectionPos).map(([a, b], i) => (
       <rect key={i} x={U(a)} y={Z(podium.height)} width={(b - a) * s} height={podium.height * s} className="sc-podium" />
     ));
-    let pLo = Infinity;
-    let pHi = -Infinity;
-    for (let j = uIdx; j < podium.outline2D.length; j += 2) {
-      pLo = Math.min(pLo, podium.outline2D[j]);
-      pHi = Math.max(pHi, podium.outline2D[j]);
+    let podiumFloors = '';
+    for (let k = 1; k < podium.floors; k++) {
+      const z = (k * podium.height) / podium.floors;
+      podiumFloors += `M${pt(pLo, z)}L${pt(pHi, z)}`;
     }
+    let basement = rect(pLo, zBottom, pHi, 0);
+    const levelH = podium.basementDepth / podium.basementLevels;
+    for (let k = 1; k < podium.basementLevels; k++) basement += `M${pt(pLo, -k * levelH)}L${pt(pHi, -k * levelH)}`;
 
     /*
      * Bridges: elevation profile from the bridge stations (top edge out, bottom
-     * edge back). Where the bridge crosses the cut line, its rounded section is
-     * drawn as poché: width along u = 2·hw / |dir_k| (oblique cut stretches it).
+     * edge back). Where the bridge crosses the cut line, its section is drawn
+     * as poché: width along u = 2·hw / |dir_k| (oblique cut stretches it).
      */
     const K = BRIDGE_STATION_STRIDE;
     const bridgeEls = bridges.map((b, n) => {
       const st = b.stations;
       const S = st.length / K;
-      let top = '';
+      let topEdge = '';
       let bottom = '';
       let cut = null;
       for (let i = 0; i < S; i++) {
         const o = K * i;
-        top += (i ? 'L' : 'M') + pt(st[o + uIdx], st[o + 2] + st[o + 4]);
+        topEdge += (i ? 'L' : 'M') + pt(st[o + uIdx], st[o + 2] + st[o + 4]);
         bottom = 'L' + pt(st[o + uIdx], st[o + 2] - st[o + 5]) + bottom;
         if (!cut && i > 0) {
           const a = st[o - K + kIdx] - sectionPos;
@@ -122,7 +191,7 @@ export default function SectionView({ model, level, sectionAxis, sectionPos }) {
       }
       return (
         <g key={n}>
-          <path d={top + bottom + 'Z'} className={cut ? 'sc-bridge is-cut' : 'sc-bridge'} />
+          <path d={topEdge + bottom + 'Z'} className={cut ? 'sc-bridge is-cut' : 'sc-bridge'} />
           {cut && (
             <rect
               x={U(cut.u - cut.hu)}
@@ -137,7 +206,7 @@ export default function SectionView({ model, level, sectionAxis, sectionPos }) {
       );
     });
 
-    // Level markers every 10 floors.
+    // Level markers every 10 floors + basement levels.
     const markers = [];
     for (let f = 0; f < params.floors; f += 10) {
       const y = Z(f * FLOOR_HEIGHT);
@@ -150,6 +219,15 @@ export default function SectionView({ model, level, sectionAxis, sectionPos }) {
         </g>
       );
     }
+    markers.push(
+      <text key="b" x={U(pHi) + 4} y={Z(zBottom / 2) + 3} className="svg-label">
+        {`B${podium.basementLevels} −${podium.basementDepth.toFixed(0)}`}
+      </text>
+    );
+
+    // Overall height dimension (tallest roof).
+    const tallest = towers.reduce((m, T) => Math.max(m, T.floors[T.floors.length - 1].z + PARAPET), 0);
+    const dx = w - mr + 16;
 
     const planY = Z(level * FLOOR_HEIGHT);
     const L = niceScaleLength(s, 90);
@@ -157,17 +235,58 @@ export default function SectionView({ model, level, sectionAxis, sectionPos }) {
 
     return (
       <>
+        <defs>
+          <pattern id="sc-hatch-core" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <rect width="5" height="5" fill="rgba(255,255,255,0.32)" />
+            <line x1="0" y1="0" x2="0" y2="5" stroke="rgba(255,255,255,0.85)" strokeWidth="1.4" />
+          </pattern>
+          <pattern id="sc-hatch-mep" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
+            <line x1="0" y1="0" x2="0" y2="4" stroke="rgba(255,255,255,0.28)" strokeWidth="1" />
+          </pattern>
+        </defs>
+
+        <path d={basement} className="sc-basement" />
         <path d={elevation} className="sc-beyond" />
+        <path d={beyondFloors} className="sc-beyond-floor" />
+        <path d={mepBands} className="sc-mep" />
+        <path d={roofParts} className="sc-roof" />
         {bridgeEls}
         {podiumRects}
+        <path d={podiumFloors} className="sc-beyond-floor" />
         <path d={poche} className="sc-poche" />
         <path d={floorLines} className="sc-floor" />
         <path d={datumLines} className="sc-datum" />
+        <path d={corePoche} className="sc-core" />
 
-        <line x1={ml - 2} y1={Z(0)} x2={w - mr} y2={Z(0)} className="svg-stroke" />
-        <line x1={U(pLo)} y1={Z(0) + 4} x2={U(pHi)} y2={Z(0) + 4} className="svg-stroke faint" />
+        <line x1={ml - 2} y1={Z(0)} x2={w - mr} y2={Z(0)} className="sc-ground" />
         <line x1={ml - 2} y1={Z(0)} x2={ml - 2} y2={Z(params.floors * FLOOR_HEIGHT)} className="svg-stroke faint" />
         {markers}
+
+        {mepLabels.map((l) => (
+          <text key={l.key} x={l.x} y={l.y} className="svg-label mep">
+            {l.text}
+          </text>
+        ))}
+        {roofLabels.map((l) => (
+          <text key={l.key} x={l.x} y={l.y} className="svg-label" textAnchor="middle">
+            {l.text}
+          </text>
+        ))}
+
+        <g>
+          <line x1={dx} y1={Z(0)} x2={dx} y2={Z(tallest)} className="svg-stroke" />
+          <line x1={dx - 4} y1={Z(0) + 4} x2={dx + 4} y2={Z(0) - 4} className="svg-stroke" />
+          <line x1={dx - 4} y1={Z(tallest) + 4} x2={dx + 4} y2={Z(tallest) - 4} className="svg-stroke" />
+          <text
+            x={dx + 11}
+            y={(Z(0) + Z(tallest)) / 2}
+            className="svg-label"
+            textAnchor="middle"
+            transform={`rotate(-90 ${dx + 11} ${(Z(0) + Z(tallest)) / 2})`}
+          >
+            {`${tallest.toFixed(1)} M TO ROOF`}
+          </text>
+        </g>
 
         <line x1={ml - 2} y1={planY} x2={w - mr} y2={planY} className="plan-line" />
         <text x={w - mr} y={planY - 4} className="svg-label cyan" textAnchor="end">
@@ -178,7 +297,7 @@ export default function SectionView({ model, level, sectionAxis, sectionPos }) {
           {`A–A′ · ${axisName} = ${sectionPos >= 0 ? '+' : ''}${sectionPos.toFixed(1)} m`}
         </text>
         <text x={14} y={33} className="svg-label">
-          {`LOOKING ${sectionAxis === 'x' ? 'NORTH' : 'EAST'} · H ${(params.floors * FLOOR_HEIGHT).toFixed(1)} M`}
+          {`LOOKING ${sectionAxis === 'x' ? 'NORTH' : 'EAST'} · CORE HATCHED · MEP FLOORS LOUVRED`}
         </text>
 
         <g>
