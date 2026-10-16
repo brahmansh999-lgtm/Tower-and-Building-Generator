@@ -6,6 +6,7 @@ import SectionView from './views/SectionView.jsx';
 import Controls from './ui/Controls.jsx';
 import VillaStudio from './VillaStudio.jsx';
 import Landing from './Landing.jsx';
+import Credit from './Credit.jsx';
 
 const INITIAL_FORM = { floors: 84, width: 36, sway: 14, twist: 120, towers: 2, bridges: 2, mode: 'adjacent' };
 const INITIAL_CUTS = { planLevel: 48, sectionPos: 0, axis: 'x', cut3D: false };
@@ -81,6 +82,7 @@ export default function App() {
           ))}
         </nav>
       )}
+      <Credit />
     </>
   );
 }
