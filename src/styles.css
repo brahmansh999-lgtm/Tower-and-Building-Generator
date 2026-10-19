@@ -864,7 +864,7 @@ input[type='range']:hover::-moz-range-thumb {
   stroke-width: 0.9;
 }
 .opt-pool {
-  fill: rgba(79, 190, 220, 0.55);
+  fill: rgba(30, 120, 255, 0.55);
 }
 .opt-canopy {
   fill: none;
@@ -897,8 +897,8 @@ input[type='range']:hover::-moz-range-thumb {
   stroke-width: 0.6;
 }
 .vl-pool {
-  fill: rgba(79, 190, 220, 0.22);
-  stroke: rgba(120, 210, 235, 0.8);
+  fill: rgba(30, 120, 255, 0.22);
+  stroke: rgba(80, 160, 255, 0.8);
   stroke-width: 1;
 }
 .vl-coping {
@@ -963,8 +963,8 @@ input[type='range']:hover::-moz-range-thumb {
   stroke-width: 0.7;
 }
 .vs-water {
-  fill: rgba(79, 190, 220, 0.3);
-  stroke: rgba(120, 210, 235, 0.7);
+  fill: rgba(30, 120, 255, 0.3);
+  stroke: rgba(80, 160, 255, 0.7);
   stroke-width: 0.8;
 }
 .vs-partition {
@@ -1114,8 +1114,8 @@ input[type='range']:hover::-moz-range-thumb {
   stroke-width: 1;
 }
 .art-pool {
-  fill: rgba(79, 190, 220, 0.25);
-  stroke: rgba(120, 210, 235, 0.8);
+  fill: rgba(30, 120, 255, 0.25);
+  stroke: rgba(80, 160, 255, 0.8);
   stroke-width: 0.8;
 }
 .tab.home {
