@@ -250,7 +250,9 @@ function buildSite(b, villa) {
   if (villa.deck) b.cap(villa.deck, [], 0.03, VP.deck, true);
   if (villa.pool) {
     const P = villa.pool;
-    b.cap(P, [], -0.14, VP.water, true);
+    // Water just under the coping lip but above lawn (0.004) and deck (0.03),
+    // which are solid caps and would otherwise hide it.
+    b.cap(P, [], 0.045, VP.water, true);
     b.band(offsetFlat(P, 0), -VILLA_POOL_DEPTH, offsetFlat(P, 0), 0.06, VP.coping);
     const outer = offsetFlat(P, 0.5);
     const inner = new Float32Array(P.length);
