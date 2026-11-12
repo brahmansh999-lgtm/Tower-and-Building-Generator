@@ -52,7 +52,8 @@ const KINDS = {
   villa: {
     build: buildRealisticVilla,
     meshes: { glass: 'glass', white: 'white', interior: 'interior', timber: 'timber', lawn: 'lawn', drive: 'pavement', water: 'water', stone: 'stone' },
-    receiveOnly: ['lawn', 'drive', 'water'],
+    // The see-through glazing lets the sun into the rooms, so it casts no shadow.
+    receiveOnly: ['lawn', 'drive', 'water', 'glass'],
     // A suburb of low houses beyond the street grid, on grass.
     context: { ground: 'lawn', far: { start: 380, r: 1600, count: 700, h: [5, 9], tall: 0.03, tallH: [12, 22], size: [12, 24] } },
     fogScale: 2.2,
@@ -83,6 +84,7 @@ export class RealisticWorld {
     this.skyScale = skyScale;
     this.tier = detectTier();
     this.mats = createRealisticMaterials(this.tier);
+    this.mats.setKind(this.kind);
 
     this.env = new RealisticEnvironment(renderer, this.tier);
     this.env.fogScale = this.spec.fogScale;

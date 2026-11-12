@@ -14,7 +14,8 @@
  *   The geometry's v = height / storey height, so each texture row is one floor.
  * Three textures use that layout:
  *   albedo     blue-grey glass, champagne mullions, dark spandrel
- *   rough/met  G = roughness, B = metalness (glass 0.07/0.9, mullion 0.35/0.6)
+ *   rough/met  R = solid frame mask (mullions and spandrels 1, glass 0),
+ *              G = roughness, B = metalness (glass 0.07/0.9, mullion 0.35/0.6)
  *   emissive   lit rooms (warm, a few cool), black elsewhere; redrawn per
  *              lighting preset with that preset's share of lit rooms
  */
@@ -71,13 +72,13 @@ function glassRMCanvas(size) {
   const g = c.getContext('2d');
   const cell = size / N;
   const mw = Math.max(1, Math.round(cell * 0.06));
-  g.fillStyle = 'rgb(0, 18, 230)'; //   glass: roughness 0.07, metalness 0.9
+  g.fillStyle = 'rgb(0, 18, 230)'; //     glass: see-through, roughness 0.07, metalness 0.9
   g.fillRect(0, 0, size, size);
   for (let r = 0; r < N; r++) {
     const y = rowTop(size, r);
-    g.fillStyle = 'rgb(0, 128, 51)'; // spandrel: 0.5 / 0.2
+    g.fillStyle = 'rgb(255, 128, 51)'; // spandrel: solid, 0.5 / 0.2
     g.fillRect(0, y + cell * (1 - SPANDREL), size, cell * SPANDREL);
-    g.fillStyle = 'rgb(0, 90, 153)'; // mullion: 0.35 / 0.6
+    g.fillStyle = 'rgb(255, 90, 153)'; // mullion: solid, 0.35 / 0.6
     for (let k = 0; k < N; k++) g.fillRect(k * cell, y, mw, cell * (1 - SPANDREL));
   }
   return c;
@@ -389,6 +390,35 @@ function patchCity(material, albedo, lit) {
   material.customProgramCacheKey = () => 'city-blocks';
 }
 
+/**
+ * See-through glass without transmission (a transmission pass would cost a
+ * second scene render, too much for VR). The glass is alpha-blended and its
+ * opacity follows a Schlick-style Fresnel term:
+ *   F = (1 − |n·v|)^3            0 looking straight in, 1 at grazing angles
+ *   alpha = mix(uGlassOpacity, 1, F)
+ * so the panes are clear face-on (the interior shows) and turn into mirrors
+ * toward the edges of a curved facade, as real glazing does. Mullions and
+ * spandrels (R of the rough/metal map) stay opaque, and a pane glowing with a
+ * lit room becomes opaque in proportion to its emission.
+ */
+function patchGlass(material) {
+  material.userData.uniforms = { uGlassOpacity: { value: 0.6 } };
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, material.userData.uniforms);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform float uGlassOpacity;')
+      .replace(
+        '#include <opaque_fragment>',
+        `float glassF = pow(1.0 - abs(dot(normalize(normal), normalize(vViewPosition))), 3.0);
+        float glassFrame = texture2D(roughnessMap, vRoughnessMapUv).r;
+        float glassGlow = clamp(dot(totalEmissiveRadiance, vec3(0.3, 0.59, 0.11)) * 0.8, 0.0, 1.0);
+        diffuseColor.a = max(max(mix(uGlassOpacity, 1.0, glassF), glassFrame), glassGlow);
+        #include <opaque_fragment>`
+      );
+  };
+  material.customProgramCacheKey = () => 'see-through-glass';
+}
+
 /* ---------------------------------------------------------------------------
  * Material set
  * ------------------------------------------------------------------------- */
@@ -439,11 +469,13 @@ export function createRealisticMaterials(tier) {
       emissiveIntensity: 0.8,
       envMapIntensity: 1.2,
       vertexColors: true,
-      // Double-sided so the far wall still shows from inside when the section
-      // cuts the tower open. No transmission: too expensive for VR.
+      // Double-sided so the far wall shows through the near one (and from
+      // inside when the section cuts the building open). See patchGlass.
       side: THREE.DoubleSide,
+      transparent: true,
     })
   );
+  patchGlass(glass);
   const podiumGlass = lit(
     new THREE.MeshPhysicalMaterial({
       name: 'real-podium-glass',
@@ -458,8 +490,10 @@ export function createRealisticMaterials(tier) {
       envMapIntensity: 1.1,
       vertexColors: true,
       side: THREE.DoubleSide,
+      transparent: true,
     })
   );
+  patchGlass(podiumGlass);
   const alu = lit(new THREE.MeshStandardMaterial({ name: 'real-alu', color: 0xebe3d1, metalness: 0.6, roughness: 0.35, vertexColors: true, side: THREE.DoubleSide }));
   const concrete = lit(new THREE.MeshStandardMaterial({ name: 'real-concrete', color: 0xffffff, map: tex.concrete, roughness: 0.85, metalness: 0, vertexColors: true, side: THREE.DoubleSide }));
   projectMap(concrete, 6);
@@ -469,7 +503,8 @@ export function createRealisticMaterials(tier) {
   const uplight = lit(new THREE.MeshStandardMaterial({ name: 'real-uplight', color: 0x1a1a1a, emissive: 0xffb070, emissiveIntensity: 0, roughness: 0.6, side: THREE.DoubleSide }));
   // Villa: white GRC ribbons, interiors (vertex-coloured), timber floors and deck.
   const white = lit(new THREE.MeshStandardMaterial({ name: 'real-white', color: 0xf3f1eb, roughness: 0.32, metalness: 0, vertexColors: true, side: THREE.DoubleSide }));
-  const interior = lit(new THREE.MeshStandardMaterial({ name: 'real-interior', vertexColors: true, roughness: 0.75, metalness: 0, side: THREE.DoubleSide }));
+  // Interiors glow warm at dusk and night (room lighting), see applyPreset.
+  const interior = lit(new THREE.MeshStandardMaterial({ name: 'real-interior', vertexColors: true, roughness: 0.75, metalness: 0, emissive: 0xffcf94, emissiveIntensity: 0, side: THREE.DoubleSide }));
   const timber = lit(new THREE.MeshStandardMaterial({ name: 'real-timber', map: tex.timber, roughness: 0.7, metalness: 0, vertexColors: true, side: THREE.DoubleSide }));
   projectMap(timber, 3);
   // Site (not cut by the section)
@@ -529,6 +564,18 @@ export function createRealisticMaterials(tier) {
     clipped,
     windowSize: W,
     litKey: '',
+    kind: 'tower',
+
+    /**
+     * How see-through the glass is face-on, per building kind: the villa's
+     * glazing shows real furnished rooms, the towers' only floor plates.
+     */
+    setKind(kind) {
+      this.kind = kind;
+      const o = kind === 'villa' ? 0.16 : 0.78;
+      glass.userData.uniforms.uGlassOpacity.value = o;
+      podiumGlass.userData.uniforms.uGlassOpacity.value = o;
+    },
 
     /**
      * Apply a lighting preset: redraw the window emission with that preset's
@@ -548,7 +595,13 @@ export function createRealisticMaterials(tier) {
         glass.needsUpdate = true;
         podiumGlass.needsUpdate = true;
       }
-      glass.emissiveIntensity = p.windowI;
+      // The window texture's lit rooms stand in for interiors the towers do
+      // not have. The villa has real ones, so by day its glass shows them
+      // instead, and from dusk the rooms themselves light up.
+      const villa = this.kind === 'villa';
+      const evening = p.lit >= 0.5;
+      glass.emissiveIntensity = villa ? (evening ? p.windowI * 0.35 : 0) : p.windowI;
+      interior.emissiveIntensity = villa && evening ? (p.lit >= 0.7 ? 0.32 : 0.18) : 0;
       podiumGlass.emissiveIntensity = p.podiumI;
       uplight.emissiveIntensity = p.uplightI;
       water.emissiveIntensity = p.uplightI * 0.35; // lit pool at dusk and night
