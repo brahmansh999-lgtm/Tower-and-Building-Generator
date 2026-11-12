@@ -1238,3 +1238,72 @@ input[type='range']:hover::-moz-range-thumb {
   text-transform: uppercase;
   pointer-events: none;
 }
+
+/* Render mode: STYLIZED | REALISTIC, lighting presets, HERO camera */
+.render-bar {
+  position: absolute;
+  top: 12px;
+  right: 18px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.render-row {
+  display: flex;
+  gap: 6px;
+}
+.render-seg {
+  margin-top: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.render-seg .seg-btn {
+  flex: none;
+  height: 26px;
+  padding: 0 12px;
+}
+.hero-btn {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--rule);
+  background: rgba(0, 0, 0, 0.6);
+  font-size: 9px;
+  letter-spacing: 0.26em;
+  color: var(--fg);
+  cursor: pointer;
+}
+.hero-btn:hover {
+  background: var(--fg);
+  color: #000;
+}
+.render-note {
+  font-size: 8.5px;
+  letter-spacing: 0.2em;
+  color: var(--amber);
+  text-transform: uppercase;
+}
+/* Black veil for the ~600 ms render-mode swap (sits over the canvas). */
+.mode-fade {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 300ms ease;
+}
+@media (max-width: 900px) {
+  .render-bar {
+    top: auto;
+    bottom: 12px;
+    left: 16px;
+    right: auto;
+    align-items: flex-start;
+  }
+  .render-seg .seg-btn {
+    padding: 0 8px;
+  }
+}

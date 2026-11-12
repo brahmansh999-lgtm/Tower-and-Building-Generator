@@ -14,7 +14,10 @@
  * docked beside the model or worn on the left wrist.
  *
  * Layout description (from the session's describePanel()):
- *   { title, subtitle, readout: [[label, value, colour?]], columns: [[item]] }
+ *   { title, subtitle, header?: [item], readout: [[label, value, colour?]],
+ *     columns: [[item]] }
+ * `header` items (the RENDER toggle and LIGHT presets) sit at the top right of
+ * the title strip, so they are the first thing on the card.
  * Items: micro · slider · seg · toggle · buttons · chips · grid
  *
  * Pointer input arrives from VRInteraction as panel UV coordinates.
@@ -44,6 +47,9 @@ const GAP = 64; //    between columns
 const TOP = 250; //   columns start below the title + readout strip
 const FOOT = 64;
 const HEIGHTS = { micro: 52, slider: 100, seg: 96, toggle: 64, buttons: 96, chips: 96 };
+const HEADER_X = 1010; // header items run from here to the right edge
+const HEADER_Y = 18;
+const HEADER_W = [430, 516]; // RENDER, LIGHT
 
 function setFont(ctx, px, weight = 500) {
   ctx.font = `${weight} ${px}px ${FONT}`;
@@ -82,10 +88,19 @@ export function vrColumn(vr, views, extra = []) {
   ];
 }
 
-/** Give every item its rectangle: three columns under the top strip. */
+/** Give every item its rectangle: header items, then three columns under the top strip. */
 function layout(desc) {
   const colW = (CW - PAD * 2 - GAP * 2) / 3;
   const items = [];
+  let hx = HEADER_X;
+  (desc.header || []).forEach((it, i) => {
+    it.x = hx;
+    it.y = HEADER_Y;
+    it.w = HEADER_W[i] || 400;
+    it.h = HEIGHTS[it.t];
+    hx += it.w + 40;
+    items.push(it);
+  });
   desc.columns.forEach((col, c) => {
     let y = TOP;
     const x = PAD + c * (colW + GAP);
@@ -338,10 +353,13 @@ export class VRPanel {
     setFont(ctx, 19);
     ctx.fillStyle = COL.dim;
     ctx.fillText(d.subtitle, PAD, 98);
-    setFont(ctx, 18);
-    ctx.textAlign = 'right';
-    ctx.fillStyle = COL.faint;
-    ctx.fillText(`${this.docked ? 'DOCKED' : 'WRIST'} · X TO HIDE`, CW - PAD, 56);
+    const where = `${this.docked ? 'DOCKED' : 'WRIST'} · X TO HIDE`;
+    if (!d.header || !d.header.length) {
+      setFont(ctx, 18);
+      ctx.textAlign = 'right';
+      ctx.fillStyle = COL.faint;
+      ctx.fillText(where, CW - PAD, 56);
+    }
 
     // Readout strip: one row of cells
     const n = d.readout.length;
@@ -369,7 +387,7 @@ export class VRPanel {
     setFont(ctx, 16);
     ctx.textAlign = 'left';
     ctx.fillStyle = COL.faint;
-    ctx.fillText(d.footer || '', PAD, CH - FOOT / 2);
+    ctx.fillText(d.header && d.header.length ? `${d.footer || ''} · ${where}` : d.footer || '', PAD, CH - FOOT / 2);
     if (d.note) {
       ctx.textAlign = 'right';
       ctx.fillStyle = COL.amber;

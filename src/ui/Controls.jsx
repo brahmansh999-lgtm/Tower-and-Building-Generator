@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { PARAM_RANGES, FLOOR_HEIGHT } from '../geometry/generateTower.js';
+import { PRESETS, PRESET_IDS } from '../render/RealisticEnvironment.js';
 
 function Slider({ label, value, min, max, step, onChange, readout, accent }) {
   return (
@@ -158,6 +159,43 @@ export default function Controls({ form, onForm, cuts, onCuts, maxLevel, section
           <Toggle label="Cut 3D model" value={cuts.cut3D} onChange={(v) => onCuts('cut3D', v)} />
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Top bar render controls: STYLIZED | REALISTIC, and in realistic mode the
+ * lighting presets and the HERO camera. The same state drives the VR panel.
+ */
+export function RenderBar({ render, onRender, onHero, note }) {
+  const real = render.mode === 'realistic';
+  return (
+    <div className="render-bar">
+      <div className="seg render-seg">
+        {[
+          ['stylized', 'Stylized'],
+          ['realistic', 'Realistic'],
+        ].map(([v, label]) => (
+          <button key={v} type="button" className={render.mode === v ? 'seg-btn is-on' : 'seg-btn'} onClick={() => onRender('mode', v)}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {real && (
+        <div className="render-row">
+          <div className="seg render-seg">
+            {PRESET_IDS.map((id) => (
+              <button key={id} type="button" className={render.preset === id ? 'seg-btn is-on' : 'seg-btn'} onClick={() => onRender('preset', id)}>
+                {PRESETS[id].label}
+              </button>
+            ))}
+          </div>
+          <button type="button" className="hero-btn" onClick={onHero}>
+            HERO
+          </button>
+        </div>
+      )}
+      {real && note && <div className="render-note">{note}</div>}
     </div>
   );
 }

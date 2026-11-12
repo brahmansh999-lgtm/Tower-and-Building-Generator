@@ -12,6 +12,10 @@
  *     comfort fades, cuts and clipping, the intro, the panels
  *   - the UI arc around the user: docked controls on the left, the desktop
  *     plan and section drawings on the right, the data sheet further left
+ *   - the render mode: STYLIZED (the unlit ribbons and void below) or
+ *     REALISTIC (the desktop's RealisticWorld, re-parented into the VR model
+ *     group: sky, sun, shadows, glass, planting, city), swapped behind a
+ *     600 ms fade, with a frame-rate guard that steps quality down
  *
  * The class is the tower studio's VR. Everything specific to the content
  * (geometry, cuts, viewpoints, panel layout, boards, intro layers) sits in the
@@ -36,12 +40,16 @@ import { VRInteraction } from './VRInteraction.js';
 import { VRPanel, vrColumn, PANEL_COLORS } from './VRPanel.js';
 import { PARAM_RANGES, FLOOR_HEIGHT, BRIDGE_STATION_STRIDE } from '../geometry/generateTower.js';
 import { VRPlanBoard, VRSectionBoard, VRDataBoard } from './VRDrawings.js';
+import { FrameMonitor } from '../render/QualityManager.js';
+import { PRESETS, PRESET_IDS } from '../render/RealisticEnvironment.js';
 
 const TABLE_H = 0.86; //  m, plinth top (waist height)
 const TABLE_Z = -0.95; // m in front of the starting position
 const FADE = 0.2; //      s each way for comfort fades
 const REBUILD_MS = 120; // minimum gap between VR mesh rebuilds while sliders move
 const QUALITY_KEY = 'ttt.vr.quality';
+const AUTOSCALE_KEY = 'ttt.vr.autoscale'; // set by the frame-rate guard
+const RENDER_FADE = 0.3; // s each way when switching render mode
 const UI_R = 1.15; // m from the rig origin to the UI arc (always well beyond 0.6 m)
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -79,8 +87,25 @@ function readQuality() {
 function writeQuality(q) {
   try {
     localStorage.setItem(QUALITY_KEY, q);
+    localStorage.removeItem(AUTOSCALE_KEY); // a manual choice replaces the guard's
   } catch {
     /* private mode: keep it for this page only */
+  }
+}
+
+function readAutoScale() {
+  try {
+    return parseFloat(localStorage.getItem(AUTOSCALE_KEY)) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+function writeAutoScale(v) {
+  try {
+    localStorage.setItem(AUTOSCALE_KEY, String(v));
+  } catch {
+    /* ignore */
   }
 }
 
@@ -162,13 +187,24 @@ export const toWorld = (x, y, z) => new THREE.Vector3(x, z, -y);
 export class VRSession {
   /**
    * @param {object} o renderer, scene, desktopRoot,
-   *   hooks: onForm(k, v), onCuts(k, v), onPresentChange(bool)
+   *   hooks: onForm(k, v), onCuts(k, v), onPresentChange(bool),
+   *          onRender(k, v), onRestore()  (both optional)
+   *   realistic: { get(), peek() } — the shared RealisticWorld (optional;
+   *          without it the session is stylized only, as in the villa studio)
    */
-  constructor({ renderer, scene, desktopRoot, hooks }) {
+  constructor({ renderer, scene, desktopRoot, hooks, realistic = null }) {
     this.renderer = renderer;
     this.scene = scene;
     this.desktopRoot = desktopRoot;
     this.hooks = hooks;
+    this.realisticHost = realistic;
+    this.renderMode = 'stylized';
+    this.preset = 'golden';
+    this.realOn = false;
+    this.qualityNote = '';
+    this.monitor = null;
+    this.shadowStep = true;
+    this.foliageStep = 1;
     this.session = null;
     this.world = null;
     this.state = null;
@@ -217,6 +253,111 @@ export class VRSession {
       this.cut3D = s.cut3D;
       if (this.world) this.applyClipping();
     }
+    // Render mode is shared with the desktop: a change from either side fades
+    // out, swaps and fades back in here (the desktop swaps on exit).
+    if (s.renderMode && s.renderMode !== this.renderMode) {
+      this.renderMode = s.renderMode;
+      if (this.presenting && this.world) this.comfortMove(() => this.applyRender(), RENDER_FADE);
+    }
+    if (s.preset && s.preset !== this.preset) {
+      this.preset = s.preset; // the desktop applies it to the shared world
+      if (this.realOn) this.real().markShadows();
+    }
+  }
+
+  /** The RealisticWorld (only while realistic mode is on in VR). */
+  real() {
+    return this.realisticHost ? this.realisticHost.peek() : null;
+  }
+
+  /** Whether this studio has a realistic mode (the villa studio does not). */
+  supportsRealistic() {
+    return !!this.realisticHost;
+  }
+
+  /**
+   * Swap STYLIZED ⇄ REALISTIC while presenting (called behind the fade).
+   * Realistic: hide the ribbons, void and line city; parent the shared world
+   * into the VR model group (so tabletop scale and yaw apply to it), switch the
+   * renderer to tone mapping and shadows, start the frame-rate guard.
+   */
+  applyRender() {
+    const want = this.renderMode === 'realistic' && this.supportsRealistic();
+    const R = want ? this.realisticHost.get() : this.real();
+    this.realOn = want;
+    if (this.styleGroup) this.styleGroup.visible = !want;
+    // The cyan cut indicators are a drawing device; realistic hides them as
+    // the desktop does (CUT 3D still cuts the model).
+    if (this.cutMeshes && this.styleGroup) for (const m of Object.values(this.cutMeshes)) m.visible = !want;
+    this.env.group.visible = !want;
+    this.env.city.visible = !want;
+    if (want) {
+      R.setModel(this.model);
+      R.attachTo(this.modelGroup);
+      R.setVR(true);
+      R.setActive(true);
+      R.applyRenderer(true);
+      R.setShadows(this.shadowStep);
+      R.setFoliageScale(R.tier.foliage * this.foliageStep);
+      R.setContextVisible(this.city);
+      this.scene.fog = R.fog;
+      if (!this.monitor) this.monitor = this.makeMonitor(R);
+      else this.monitor.hold(3);
+    } else {
+      if (R) {
+        R.setReveal(1);
+        if (R.env.sunrise < 1) R.setSunrise(1);
+        R.setActive(false);
+        R.applyRenderer(false);
+      }
+      this.scene.fog = this.env.fog;
+      // A stylized intro that was interrupted must not leave meshes half drawn.
+      if (!this.intro.active && this.meshes) for (const m of Object.values(this.meshes)) m.geometry.setDrawRange(0, Infinity);
+    }
+    this.applyMode(false);
+    this.applyClipping();
+  }
+
+  /**
+   * VR performance guard (realistic mode). Rolling 2 s average; below 90 % of
+   * the session's frame rate it steps down, one step per window:
+   *   1. shadows off
+   *   2. planting halved
+   *   3. framebuffer scale 1.0: WebXR cannot resize the framebuffer of a
+   *      running session, so foveation goes to maximum now and 1.0x is used
+   *      from the next time VR is entered (stored until a manual choice)
+   */
+  makeMonitor(R) {
+    const target = (this.session && this.session.frameRate) || R.tier.vrFps;
+    return new FrameMonitor({
+      target,
+      steps: [
+        {
+          label: 'SHADOWS OFF',
+          run: () => {
+            this.shadowStep = false;
+            R.setShadows(false);
+          },
+        },
+        {
+          label: 'PLANTING HALVED',
+          run: () => {
+            this.foliageStep *= 0.5;
+            R.setFoliageScale(R.tier.foliage * this.foliageStep);
+          },
+        },
+        {
+          label: this.activeScale > 1 ? 'FOVEATION MAX · 1.0X NEXT ENTRY' : 'FOVEATION MAX',
+          run: () => {
+            this.renderer.xr.setFoveation(1);
+            if (this.activeScale > 1) writeAutoScale(1);
+          },
+        },
+      ],
+      onStep: (step) => {
+        this.qualityNote = `QUALITY AUTO-ADJUSTED · ${step.label}`;
+      },
+    });
   }
 
   /* ---------------- world ---------------- */
@@ -308,6 +449,7 @@ export class VRSession {
         setYaw: (y) => {
           this.yaw = y;
           this.stage.rotation.y = y;
+          this.onStageMoved();
         },
         getScale: () => 1 / this.denom,
         setScale: (s) => this.setTabletopScale(1 / s),
@@ -356,7 +498,10 @@ export class VRSession {
       lines: mesh(mats.cutLines, 4),
       glow: mesh(mats.cutGlow, 3),
     };
-    this.modelGroup.add(...Object.values(this.meshes), ...Object.values(this.cutMeshes));
+    // The ribbons sit in their own group so realistic mode can hide them in one go.
+    this.styleGroup = new THREE.Group();
+    this.styleGroup.add(...Object.values(this.meshes));
+    this.modelGroup.add(this.styleGroup, ...Object.values(this.cutMeshes));
   }
 
   createBoards() {
@@ -426,6 +571,7 @@ export class VRSession {
       m.clippingPlanes = planes;
       m.needsUpdate = true;
     }
+    if (this.realOn) this.real().setCut(this.cut3D ? this.clipPlane : null);
   }
 
   /**
@@ -466,6 +612,12 @@ export class VRSession {
       this.plinth.visible = false;
       this.env.setTabletop(false);
     }
+    if (this.realOn) this.real().setTabletop(this.mode === 'tabletop', this.plinthRadius() * this.denom);
+  }
+
+  /** The tabletop moved (grab, scale): the shadow map follows it. */
+  onStageMoved() {
+    if (this.realOn) this.real().markShadows();
   }
 
   setMode(mode, moveUser = true) {
@@ -484,6 +636,7 @@ export class VRSession {
     const R = this.plinthRadius();
     this.stage.scale.setScalar(1 / denom);
     this.plinth.scale.set(R, 1, R);
+    this.onStageMoved();
   }
 
   /** After a grab: rebuild ribbons if their width is now off by > 15 %, refit the city. */
@@ -492,6 +645,7 @@ export class VRSession {
     const target = this.targetLineScale();
     if (Math.abs(target - this.builtLineScale) / this.builtLineScale > 0.15) this.rebuild();
     this.env.setTabletop(true, this.plinthRadius() * this.denom);
+    if (this.realOn) this.real().setTabletop(true, this.plinthRadius() * this.denom);
   }
 
   /* ---------------- moving the user ---------------- */
@@ -521,25 +675,32 @@ export class VRSession {
     this.rig.position.set(p.x - off.x, p.y, p.z - off.z);
   }
 
-  /** Fade to black over 200 ms, run fn, fade back over 200 ms. */
-  comfortMove(fn) {
-    if (this.fade && !this.fade.ran) this.fade.fn = fn;
-    else this.fade = { t: 0, fn, ran: false };
+  /** Fade to black over `dur` (200 ms), run fn, fade back over `dur`. */
+  comfortMove(fn, dur = FADE) {
+    if (this.fade && !this.fade.ran) {
+      const prev = this.fade.fn;
+      this.fade.fn = () => {
+        prev();
+        fn();
+      };
+      this.fade.dur = Math.max(this.fade.dur, dur);
+    } else this.fade = { t: 0, fn, ran: false, dur };
   }
 
   updateFade(dt) {
     const f = this.fade;
     if (!f) return;
     f.t += dt;
+    const D = f.dur;
     let o;
-    if (f.t < FADE) o = f.t / FADE;
+    if (f.t < D) o = f.t / D;
     else {
       if (!f.ran) {
         f.ran = true;
         f.fn();
       }
-      o = Math.max(0, 1 - (f.t - FADE) / FADE);
-      if (f.t >= 2 * FADE) this.fade = null;
+      o = Math.max(0, 1 - (f.t - D) / D);
+      if (f.t >= 2 * D) this.fade = null;
     }
     this.mats.fade.opacity = o;
     this.fadeMesh.visible = o > 0.001;
@@ -655,6 +816,11 @@ export class VRSession {
   }
 
   onPanel(group, key, value) {
+    if (group === 'render') {
+      // Shared state: the app updates and the change comes back via setState.
+      if (this.hooks.onRender) this.hooks.onRender(key, value);
+      return;
+    }
     if (group !== 'vr' || key === 'planFocus') this.onContentPanel(group, key, value);
     else if (key === 'scale') this.setMode(value);
     else if (key === 'view') {
@@ -666,6 +832,7 @@ export class VRSession {
     } else if (key === 'city') {
       this.city = value;
       this.env.setCityVisible(value);
+      if (this.realOn) this.real().setContextVisible(value);
     } else if (key === 'smooth') this.smooth = value;
     else if (key === 'panelSize') this.panel.setSize(value);
     else if (key === 'boards') {
@@ -703,6 +870,18 @@ export class VRSession {
     };
   }
 
+  /** Render mode toggle (and the lighting presets when realistic), at the top of the panel. */
+  renderHeader() {
+    if (!this.supportsRealistic()) return null;
+    const items = [
+      { t: 'seg', group: 'render', key: 'mode', label: 'RENDER', value: this.renderMode, options: [['stylized', 'STYLIZED'], ['realistic', 'REALISTIC']] },
+    ];
+    if (this.renderMode === 'realistic') {
+      items.push({ t: 'seg', group: 'render', key: 'preset', label: 'LIGHT', value: this.preset, options: PRESET_IDS.map((id) => [id, PRESETS[id].label]) });
+    }
+    return items;
+  }
+
   /** Panel layout for the tower studio: FORM · CLUSTER | CUTS · VR | VR options. */
   describePanel() {
     const s = this.state;
@@ -718,6 +897,7 @@ export class VRSession {
     return {
       title: 'TWISTED TWIN TOWERS',
       subtitle: 'SKY-BRIDGE ARCH TYPOLOGY · PARAMETRIC STUDY · VR',
+      header: this.renderHeader(),
       readout: [
         ['GFA', `${fmt(st.gfa)} M²`],
         ['FLOORS', `${st.totalFloors}`],
@@ -752,12 +932,14 @@ export class VRSession {
         vrCol.slice(3),
       ],
       footer: vr.scale === 'tabletop' ? 'GRIP: ROTATE · BOTH GRIPS: SCALE · TRIGGER: PRESS' : 'STICK ↑ TELEPORT · ← → TURN 30° · TRIGGER: PRESS',
-      note: this.note,
+      note: this.note || this.qualityNote,
     };
   }
 
   qualityScale() {
-    return this.quality === 'auto' ? detectQuality().scale : parseFloat(this.quality) || 1;
+    if (this.quality !== 'auto') return parseFloat(this.quality) || 1;
+    const auto = readAutoScale();
+    return auto ? Math.min(auto, detectQuality().scale) : detectQuality().scale;
   }
 
   /* ---------------- lifecycle ---------------- */
@@ -794,13 +976,21 @@ export class VRSession {
     this.note = '';
     this.rebuild();
     this.rebuildCuts();
-    this.applyClipping();
+    this.qualityNote = '';
+    this.shadowStep = true;
+    this.foliageStep = 1;
+    this.monitor = null;
+    this.applyRender();
     this.resetRig();
     this.panel.setVisible(false);
     this.uiRevealed = false;
     this.ui.visible = false;
     this.env.setReveal(0);
     this.intro.start();
+    if (this.realOn) {
+      this.real().setSunrise(0);
+      this.real().setReveal(0);
+    }
     this.hooks.onPresentChange(true);
 
     await renderer.xr.setSession(session);
@@ -815,6 +1005,17 @@ export class VRSession {
     const renderer = this.renderer;
     if (this.session) this.session.removeEventListener('end', this.onEnd);
     this.session = null;
+    const R = this.real();
+    if (R) {
+      // Hand the shared realistic world back to the desktop, fully revealed.
+      R.setReveal(1);
+      if (R.env.sunrise < 1) R.setSunrise(1);
+      R.setVR(false);
+      R.attachTo(this.desktopRoot);
+      R.setActive(false);
+      R.applyRenderer(false);
+    }
+    this.realOn = false;
     if (this.saved) {
       renderer.clippingPlanes = this.saved.clipping;
       renderer.localClippingEnabled = this.saved.local;
@@ -823,11 +1024,18 @@ export class VRSession {
     this.world.visible = false;
     this.desktopRoot.visible = true;
     this.fade = null;
+    if (this.hooks.onRestore) this.hooks.onRestore();
     this.hooks.onPresentChange(false);
   }
 
   /** Meshes the intro reveals: by height (tower, fins) and along the span (bridges). */
   introLayers() {
+    if (this.realOn) {
+      // Realistic: the sun rises while the tower assembles floor by floor
+      // (a horizontal clip plane stepped by storeys).
+      const R = this.real();
+      return { tower: [], fins: [], bridges: [], onReveal: (k) => R.setReveal(k), onSunrise: (k) => R.setSunrise(k) };
+    }
     return {
       tower: [this.meshes.shell, this.meshes.bands],
       fins: [this.meshes.fins, this.meshes.finGlow],
@@ -862,6 +1070,10 @@ export class VRSession {
     const eyeQ = this.camera.getWorldQuaternion(new THREE.Quaternion());
     this.env.update(dt, eye);
     this.updateContent(dt);
+    if (this.realOn) {
+      this.real().update(dt, eye);
+      if (this.monitor) this.monitor.sample(dt);
+    }
 
     this.updateFade(dt);
     // Vignette tightens with smooth-locomotion speed (eased so it never pops).

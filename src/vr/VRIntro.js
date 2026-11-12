@@ -8,11 +8,17 @@
  * No geometry is touched per frame: every VR mesh carries a reveal table
  * (see buildVRMeshes.js), and the intro only moves each geometry's drawRange.
  *
+ * In REALISTIC mode the session passes onReveal / onSunrise instead: the sun
+ * sweeps the sky from below the horizon to the preset (dark to golden) over
+ * the first 4 s, while a horizontal clip plane stepped by whole storeys
+ * assembles the tower floor by floor (0.8 – 4.2 s).
+ *
  * Timeline (seconds):
  *   0.0 – 1.2   grid, horizon, stars and city fade in
  *   0.8 – 4.2   shell + floor bands, by height (eased)
  *   2.6 – 4.6   fins, by height
  *   3.8 – 5.2   bridge bodies, rails and glow, sweeping A → B
+ *   0.0 – 4.0   realistic only: sunrise
  */
 
 import { revealCount } from '../geometry/buildVRMeshes.js';
@@ -41,7 +47,7 @@ export class VRIntro {
 
   /**
    * Advance and apply. `layers` = { tower: Mesh[], fins: Mesh[], bridges: Mesh[],
-   * onReveal?(0..1) },
+   * onReveal?(0..1), onSunrise?(0..1) },
    * `maxZ` = model height in metres, `env` has setReveal(0..1).
    */
   update(dt, layers, maxZ, env) {
@@ -63,6 +69,7 @@ export class VRIntro {
     layers.bridges.forEach((m) => show(m, sweep - 1e-6));
     // Content without reveal tables (the villa) rises through a clipping plane instead.
     if (layers.onReveal) layers.onReveal(phase(t, 0.8, 4.2));
+    if (layers.onSunrise) layers.onSunrise(phase(t, 0, 4.0));
     if (t >= INTRO_LENGTH) this.finish(layers, env);
   }
 
@@ -74,5 +81,6 @@ export class VRIntro {
       if (m) m.geometry.setDrawRange(0, Infinity);
     }
     if (layers.onReveal) layers.onReveal(1);
+    if (layers.onSunrise) layers.onSunrise(1);
   }
 }

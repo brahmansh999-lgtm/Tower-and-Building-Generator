@@ -3,7 +3,7 @@ import { generateTower, sectionRange, FLOOR_HEIGHT } from './geometry/generateTo
 import Viewport3D from './views/Viewport3D.jsx';
 import PlanView from './views/PlanView.jsx';
 import SectionView from './views/SectionView.jsx';
-import Controls from './ui/Controls.jsx';
+import Controls, { RenderBar } from './ui/Controls.jsx';
 import VillaStudio from './VillaStudio.jsx';
 import Landing from './Landing.jsx';
 import Credit from './Credit.jsx';
@@ -11,6 +11,7 @@ import VREnterButton, { useVREntry } from './ui/VREnter.jsx';
 
 const INITIAL_FORM = { floors: 84, width: 36, sway: 14, twist: 120, towers: 2, bridges: 2, mode: 'adjacent' };
 const INITIAL_CUTS = { planLevel: 48, sectionPos: 0, axis: 'x', cut3D: false };
+const INITIAL_RENDER = { mode: 'stylized', preset: 'golden' };
 
 /**
  * Coalesce rapid slider updates to at most one every `ms` (leading + trailing),
@@ -100,6 +101,12 @@ function TowerStudio({ active }) {
   const onForm = useCallback((k, v) => setForm((f) => ({ ...f, [k]: v })), []);
   const onCuts = useCallback((k, v) => setCuts((c) => ({ ...c, [k]: v })), []);
 
+  // Render mode + lighting preset: one state for the desktop and the VR panel.
+  const [render, setRender] = useState(INITIAL_RENDER);
+  const onRender = useCallback((k, v) => setRender((r) => ({ ...r, [k]: v })), []);
+  const [heroTick, setHeroTick] = useState(0);
+  const [qualityNote, setQualityNote] = useState('');
+
   // Plan framing: whole site, or zoomed onto one tower to read the fit-out.
   const [planFocus, setPlanFocus] = useState(0);
   const focus = planFocus === 'site' || planFocus < model.towers.length ? planFocus : 'site';
@@ -135,8 +142,14 @@ function TowerStudio({ active }) {
           onCuts={onCuts}
           vrRef={vr.vrRef}
           onVRChange={vr.setInVR}
+          renderMode={render.mode}
+          preset={render.preset}
+          heroTick={heroTick}
+          onRender={onRender}
+          onQualityNote={setQualityNote}
         />
         <VREnterButton vr={vr} />
+        <RenderBar render={render} onRender={onRender} onHero={() => setHeroTick((t) => t + 1)} note={qualityNote} />
 
         <header className="readout">
           <div className="title">TWISTED TWIN TOWERS</div>
