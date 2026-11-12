@@ -145,9 +145,11 @@ export function personPath(p, X, Y, s) {
   return furniturePath(it, X, Y, s) + `M${n1(X(p.x) - r)},${n1(Y(p.y))}a${n1(r)},${n1(r)} 0 1,0 ${n1(2 * r)},0a${n1(r)},${n1(r)} 0 1,0 ${n1(-2 * r)},0`;
 }
 
-export default function PlanView({ model, level, sectionAxis, sectionPos, focus = 'site' }) {
+export default function PlanView({ model, level, sectionAxis, sectionPos, focus = 'site', size }) {
   const hostRef = useRef(null);
-  const { w, h } = useElementSize(hostRef);
+  const measured = useElementSize(hostRef);
+  // `size` renders at a fixed size off-screen (the VR drawing boards).
+  const { w, h } = size || measured;
 
   const drawing = useMemo(() => {
     if (w < 40 || h < 40) return null;

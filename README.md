@@ -32,7 +32,7 @@ Then open the local URL Vite prints (default https://localhost:5173). The dev se
 - `src/geometry/generateVilla.js` — villa options, room partitioning, fit-out and suburban context
 - `src/VillaStudio.jsx`, `src/views/Villa*.jsx`, `src/ui/VillaControls.jsx` — villa tab
 - `src/geometry/buildVRMeshes.js` — VR geometry (ribbons, fin strips, bridge tubes, glow, walkable surfaces) built from the same generateTower() output
-- `src/vr/` — VR session, environment, interaction, wrist panel and intro
+- `src/vr/` — VR session, environment, interaction, control panel, drawing boards and intro
 
 The layout adapts to phones: the model, controls and drawings stack in one scrolling column.
 
@@ -42,7 +42,8 @@ An **ENTER VR** button appears at the bottom right of the Towers studio when the
 
 - **Tabletop (1:500):** the model stands on a glowing plinth at waist height. Grip (or trigger/pinch) and move a hand to rotate it; grab with both hands and pull apart to scale between 1:1000 and 1:200.
 - **Human scale (1:1):** right stick forward aims a teleport arc, release to jump; right stick left/right snap-turns 30°. You can land on the ground, the podium roof, tower roofs and bridge roofs. With hand tracking, pinch-and-hold away from the menu to aim the arc.
-- **Wrist menu:** press **X** on the left controller (always shown when using hands). It has the same sliders as the desktop (Form / Cluster / Cuts), plus scale mode, viewpoints (Street, Podium, Bridge, Crown, Drone), city context, smooth locomotion (off by default, with a comfort vignette), a floating plan map and a render-quality override.
+- **Controls:** every desktop slider (Form / Cluster / Cuts) plus scale mode, viewpoints (Street, Podium, Bridge, Crown, Drone), plan frame (site or one tower), city context, smooth locomotion (off by default, with a comfort vignette) and a render-quality override. The menu is docked to your left by default; switch it to your left wrist from the menu, and press **X** to hide or show it.
+- **Drawing boards:** the desktop plan (with the full floor fit-out and a "you are here" marker at human scale) and the section stand to your right and update live with the sliders. A data sheet to your left lists totals, the podium, every tower, the current floor of each tower (use, GFA, NIA, efficiency, core, lifts) and every bridge.
 - Any trigger skips the opening build-up animation.
 
 ### Testing on a Quest over Wi-Fi

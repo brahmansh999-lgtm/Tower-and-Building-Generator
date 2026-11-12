@@ -10,6 +10,8 @@
  *     rebuilt only when form / cluster params or the line scale change
  *   - tabletop (1:500 on a plinth) and human (1:1) scale modes, viewpoints,
  *     comfort fades, cuts and clipping, the intro, the panels
+ *   - the UI arc around the user: docked controls on the left, the desktop
+ *     plan and section drawings on the right, the data sheet further left
  *
  * World hierarchy (three.js y-up):
  *   world
@@ -28,7 +30,8 @@ import { buildVRMeshes, buildCutGeometry } from '../geometry/buildVRMeshes.js';
 import { VREnvironment } from './VREnvironment.js';
 import { VRIntro } from './VRIntro.js';
 import { VRInteraction } from './VRInteraction.js';
-import { VRPanel, VRPlanPanel } from './VRPanel.js';
+import { VRPanel } from './VRPanel.js';
+import { VRPlanBoard, VRSectionBoard, VRDataBoard } from './VRDrawings.js';
 
 const TABLE_H = 0.86; //  m, plinth top (waist height)
 const TABLE_Z = -0.95; // m in front of the starting position
@@ -36,6 +39,7 @@ const DEFAULT_DENOM = 500;
 const FADE = 0.2; //      s each way for comfort fades
 const REBUILD_MS = 120; // minimum gap between VR mesh rebuilds while sliders move
 const QUALITY_KEY = 'ttt.vr.quality';
+const UI_R = 1.15; // m from the rig origin to the UI arc (always well beyond 0.6 m)
 const UP = new THREE.Vector3(0, 1, 0);
 
 /** True when the browser can run an immersive-vr session. */
@@ -180,6 +184,10 @@ export class VRSession {
     this.note = '';
     this.fade = null;
     this.vig = 0;
+    this.planFocus = 0; // as the desktop: tower A's floor by default
+    this.boardsOn = true;
+    this.dataOn = true;
+    this.uiRevealed = false;
     this.builtLineScale = 0;
     this.maxZ = 1;
     this.onEnd = this.onEnd.bind(this);
@@ -277,8 +285,14 @@ export class VRSession {
       onChange: (g, k, v) => this.onPanel(g, k, v),
       onHaptic: () => this.interaction && this.interaction.tick(),
     });
-    this.planPanel = new VRPlanPanel();
-    this.rig.add(this.panel.mesh, this.planPanel.mesh);
+    this.planBoard = new VRPlanBoard();
+    this.sectionBoard = new VRSectionBoard();
+    this.dataBoard = new VRDataBoard();
+    this.ui = new THREE.Group();
+    this.ui.name = 'vr-ui';
+    this.ui.add(this.planBoard.mesh, this.sectionBoard.mesh, this.dataBoard.mesh);
+    this.rig.add(this.panel.mesh, this.ui);
+    this.layoutUI();
 
     this.intro = new VRIntro();
     this.interaction = new VRInteraction({
@@ -297,7 +311,7 @@ export class VRSession {
         },
         teleport: (p) => this.comfortMove(() => this.placeFeet(p, null)),
         togglePanel: () => this.panel.toggle(),
-        handsDetected: () => this.panel.setVisible(true),
+        handsDetected: () => this.uiRevealed && this.panel.setVisible(true),
         smooth: () => this.smooth,
         stageCenter: () => this.plinth.getWorldPosition(new THREE.Vector3()),
         getYaw: () => this.yaw,
@@ -310,6 +324,28 @@ export class VRSession {
         grabEnd: () => this.onGrabEnd(),
       },
     });
+  }
+
+  /* ---------------- UI arc ---------------- */
+
+  /**
+   * Boards stand on a circle of radius UI_R around the rig origin, each turned
+   * to face the centre. Azimuth θ is measured from straight ahead (−Z), positive
+   * to the left:  position = (−sin θ·R, y, −cos θ·R),  rotation.y = θ
+   * (a plane's +Z normal turned by θ points back at the origin).
+   *   controls  +50°   plan  −50°   section  −95°   data  +100°
+   * The tabletop model sits straight ahead, between controls and plan.
+   */
+  layoutUI() {
+    const put = (obj, deg, y) => {
+      const th = (deg * Math.PI) / 180;
+      obj.position.set(-Math.sin(th) * UI_R, y, -Math.cos(th) * UI_R);
+      obj.rotation.set(0, th, 0);
+    };
+    if (this.panel.docked) put(this.panel.mesh, 50, 1.25);
+    put(this.planBoard.mesh, -50, 1.45);
+    put(this.sectionBoard.mesh, -95, 1.45);
+    put(this.dataBoard.mesh, 100, 1.35);
   }
 
   /* ---------------- building ---------------- */
@@ -598,7 +634,18 @@ export class VRSession {
       this.city = value;
       this.env.setCityVisible(value);
     } else if (key === 'smooth') this.smooth = value;
-    else if (key === 'planPanel') this.planPanel.mesh.visible = value;
+    else if (key === 'planFocus') this.planFocus = value;
+    else if (key === 'boards') {
+      this.boardsOn = value;
+      this.planBoard.mesh.visible = value;
+      this.sectionBoard.mesh.visible = value;
+    } else if (key === 'data') {
+      this.dataOn = value;
+      this.dataBoard.mesh.visible = value;
+    } else if (key === 'docked') {
+      this.panel.setDocked(value);
+      this.layoutUI();
+    }
     else if (key === 'quality') {
       this.quality = value;
       writeQuality(value);
@@ -619,7 +666,11 @@ export class VRSession {
         denom: this.denom,
         city: this.city,
         smooth: this.smooth,
-        planPanel: this.planPanel.mesh.visible,
+        planFocus: this.planFocus,
+        towerNames: this.model.towers.map((T) => T.name),
+        boards: this.boardsOn,
+        data: this.dataOn,
+        docked: this.panel.docked,
         quality: this.quality,
         device: detectQuality().device,
         activeScale: this.activeScale,
@@ -669,6 +720,8 @@ export class VRSession {
     this.applyClipping();
     this.resetRig();
     this.panel.setVisible(false);
+    this.uiRevealed = false;
+    this.ui.visible = false;
     this.env.setReveal(0);
     this.intro.start();
     this.hooks.onPresentChange(true);
@@ -734,12 +787,21 @@ export class VRSession {
       const left = this.interaction.inputs.find((s) => s.source && s.handedness === 'left');
       let anchor = null;
       if (left) anchor = left.grip.visible ? left.grip : left.isHand ? left.hand.joints && left.hand.joints.wrist : null;
+      // The controls and boards appear once the intro has finished (or was skipped).
+      if (!this.intro.active && !this.uiRevealed) {
+        this.uiRevealed = true;
+        this.panel.setVisible(true);
+        this.ui.visible = true;
+      }
       this.panel.setState(this.panelState());
       this.panel.place(this.rig, eye, eyeQ, anchor);
       this.panel.update();
+      const s = this.state;
       const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(eyeQ);
       const here = this.mode === 'human' ? { x: eye.x, y: -eye.z, heading: Math.atan2(fwd.x, -fwd.z) } : null;
-      this.planPanel.update(this.model, this.state.planLevel, this.state.sectionAxis, this.state.sectionPos, here);
+      this.planBoard.update(this.model, s.planLevel, s.sectionAxis, s.sectionPos, this.planFocus, here);
+      this.sectionBoard.update(this.model, s.planLevel, s.sectionAxis, s.sectionPos);
+      this.dataBoard.update(this.model, s.planLevel);
     }
     return this.camera;
   }
@@ -749,7 +811,9 @@ export class VRSession {
     if (!this.world) return;
     this.interaction.dispose();
     this.panel.dispose();
-    this.planPanel.dispose();
+    this.planBoard.dispose();
+    this.sectionBoard.dispose();
+    this.dataBoard.dispose();
     this.env.dispose();
     this.world.traverse((o) => {
       if (o.geometry) o.geometry.dispose();

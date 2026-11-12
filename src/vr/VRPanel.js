@@ -7,8 +7,10 @@
  * a MeshBasicMaterial plane. The canvas is redrawn only when a value or the
  * hover state changes.
  *
- *   VRPanel      wrist menu on the left controller: FORM / CLUSTER / CUTS / VR
- *   VRPlanPanel  optional floating plan of the current cut with "you are here"
+ * VRPanel holds every desktop slider (FORM / CLUSTER / CUTS) plus the VR
+ * options. It is either docked in a fixed spot beside the model (the default,
+ * so all controls are always in view) or worn on the left wrist.
+ * The plan / section / data boards live in VRDrawings.js.
  *
  * Pointer input arrives from VRInteraction as panel UV coordinates.
  */
@@ -17,9 +19,10 @@ import * as THREE from 'three';
 import { PARAM_RANGES, FLOOR_HEIGHT } from '../geometry/generateTower.js';
 
 const CW = 1024; //  canvas px
-const CH = 1700;
+const CH = 1900;
 export const PANEL_W = 0.26; // m
 export const PANEL_H = (PANEL_W * CH) / CW;
+const DOCK_SCALE = 1.75; // docked card is 0.455 m wide
 const MIN_EYE_DIST = 0.6; // UI never closer than this to the eyes
 
 const COL = {
@@ -77,8 +80,16 @@ function describe(s) {
       options: [['street', 'STREET'], ['podium', 'PODIUM'], ['bridge', 'BRIDGE'], ['crown', 'CROWN'], ['drone', 'DRONE']],
     },
     {
-      t: 'chips', group: 'vr', label: 'OPTIONS',
-      options: [['city', 'CITY', vr.city], ['smooth', 'SMOOTH MOVE', vr.smooth], ['planPanel', 'PLAN MAP', vr.planPanel]],
+      t: 'seg', group: 'vr', key: 'planFocus', label: 'PLAN FRAME', value: vr.planFocus,
+      options: [['site', 'SITE'], ...vr.towerNames.map((n, i) => [i, n])],
+    },
+    {
+      t: 'chips', group: 'vr', label: 'SHOW',
+      options: [['boards', 'DRAWINGS', vr.boards], ['data', 'DATA', vr.data], ['city', 'CITY', vr.city], ['smooth', 'SMOOTH', vr.smooth]],
+    },
+    {
+      t: 'seg', group: 'vr', key: 'docked', label: 'MENU', value: vr.docked,
+      options: [[true, 'DOCKED'], [false, 'ON WRIST']],
     },
     {
       t: 'seg', group: 'vr', key: 'quality', label: `QUALITY · ${vr.device} · ${vr.activeScale.toFixed(1)}×`, value: vr.quality,
@@ -113,6 +124,7 @@ export class VRPanel {
     this.material = new THREE.MeshBasicMaterial({
       map: this.texture,
       transparent: true,
+      depthTest: false, // UI is drawn over the scene, so it never sinks into a wall
       depthWrite: false,
       side: THREE.DoubleSide,
       toneMapped: false,
@@ -128,6 +140,14 @@ export class VRPanel {
     this.drag = null;
     this.lastKey = '';
     this.anchored = false; // fallback placement when no left controller is tracked
+    this.docked = true;
+  }
+
+  /** Docked: a larger card placed by the session. Wrist: life size on the left hand. */
+  setDocked(v) {
+    this.docked = v;
+    this.anchored = false;
+    this.mesh.scale.setScalar(v ? DOCK_SCALE : 1);
   }
 
   get visible() {
@@ -160,7 +180,7 @@ export class VRPanel {
    * stays put in the rig until reopened.
    */
   place(rig, eye, eyeQuat, leftGrip) {
-    if (!this.mesh.visible) return;
+    if (!this.mesh.visible || this.docked) return;
     const p = new THREE.Vector3();
     if (leftGrip && leftGrip.visible) {
       // Offset in world terms (up, and away from the eyes horizontally) so a
@@ -316,7 +336,7 @@ export class VRPanel {
           ctx.fillText('TWISTED TWIN TOWERS', PAD, y + 54);
           setFont(ctx, 19);
           ctx.fillStyle = COL.dim;
-          ctx.fillText('VR · WRIST MENU · X TO HIDE', PAD, y + 92);
+          ctx.fillText(`VR · ${s.vr.docked ? 'DOCKED' : 'WRIST'} MENU · X TO HIDE`, PAD, y + 92);
           break;
         }
         case 'readout': {
@@ -462,158 +482,6 @@ export class VRPanel {
           break;
       }
     }
-  }
-
-  dispose() {
-    this.mesh.geometry.dispose();
-    this.material.dispose();
-    this.texture.dispose();
-  }
-}
-
-/* ---------------------------------------------------------------------------
- * Floating plan of the current cut
- * ------------------------------------------------------------------------- */
-
-const PW = 768;
-const PLAN_SIZE = 0.44; // m
-
-export class VRPlanPanel {
-  constructor() {
-    this.canvas = document.createElement('canvas');
-    this.canvas.width = PW;
-    this.canvas.height = PW;
-    this.ctx = this.canvas.getContext('2d');
-    this.texture = new THREE.CanvasTexture(this.canvas);
-    this.texture.colorSpace = THREE.SRGBColorSpace;
-    this.material = new THREE.MeshBasicMaterial({
-      map: this.texture,
-      transparent: true,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-      toneMapped: false,
-      fog: false,
-    });
-    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(PLAN_SIZE, PLAN_SIZE), this.material);
-    this.mesh.name = 'vr-plan-panel';
-    this.mesh.renderOrder = 10;
-    this.mesh.visible = false;
-    // Beside the user, at the right, ~0.95 m from the eyes: always ≥ 0.6 m.
-    this.mesh.position.set(0.62, 1.32, -0.72);
-    this.mesh.rotation.y = -0.7;
-    this.lastKey = '';
-  }
-
-  /**
-   * Draw plates at the plan level, the podium, bridges cut by the level, the
-   * section line and (human scale) a "you are here" marker with view heading.
-   * here = { x, y, heading } in data space, or null.
-   */
-  update(model, level, axis, pos, here) {
-    if (!this.mesh.visible || !model) return;
-    const hk = here ? `${here.x.toFixed(0)},${here.y.toFixed(0)},${here.heading.toFixed(1)}` : '-';
-    const key = `${model.params.floors}|${JSON.stringify(model.params)}|${level}|${axis}|${pos.toFixed(1)}|${hk}`;
-    if (key === this.lastKey) return;
-    this.lastKey = key;
-
-    const ctx = this.ctx;
-    ctx.clearRect(0, 0, PW, PW);
-    ctx.fillStyle = 'rgba(0,0,0,0.86)';
-    ctx.fillRect(0, 0, PW, PW);
-    ctx.strokeStyle = COL.fg;
-    ctx.lineWidth = 3;
-    ctx.strokeRect(1.5, 1.5, PW - 3, PW - 3);
-
-    const b = model.bounds;
-    const span = Math.max(b.maxX - b.minX, b.maxY - b.minY) * 1.25 + 40;
-    const cx = (b.minX + b.maxX) / 2;
-    const cy = (b.minY + b.maxY) / 2;
-    const k = (PW - 120) / span;
-    const X = (x) => PW / 2 + (x - cx) * k;
-    const Y = (y) => PW / 2 + 30 - (y - cy) * k;
-    const poly = (p) => {
-      ctx.beginPath();
-      for (let i = 0; i < p.length; i += 2) ctx[i ? 'lineTo' : 'moveTo'](X(p[i]), Y(p[i + 1]));
-      ctx.closePath();
-    };
-
-    setFont(ctx, 22, 700);
-    ctx.textBaseline = 'middle';
-    ctx.textAlign = 'left';
-    ctx.fillStyle = COL.fg;
-    ctx.fillText(`PLAN · L${level}`, 34, 40);
-    ctx.textAlign = 'right';
-    ctx.fillStyle = COL.cyan;
-    ctx.fillText(`+${(level * FLOOR_HEIGHT).toFixed(1)} M`, PW - 34, 40);
-
-    ctx.strokeStyle = COL.faint;
-    ctx.lineWidth = 2;
-    poly(model.podium.outline2D);
-    ctx.stroke();
-
-    const z = level * FLOOR_HEIGHT;
-    ctx.fillStyle = 'rgba(255,179,71,0.18)';
-    ctx.strokeStyle = COL.amber;
-    for (const br of model.bridges) {
-      if (z < br.z - 0.01 || z > br.z + br.height) continue;
-      poly(br.outline2D);
-      ctx.fill();
-      ctx.stroke();
-    }
-
-    for (const T of model.towers) {
-      if (level >= T.floors.length) continue;
-      const P = T.floors[level];
-      ctx.fillStyle = 'rgba(255,255,255,0.06)';
-      ctx.strokeStyle = COL.fg;
-      ctx.lineWidth = 3;
-      poly(P.points2D);
-      ctx.fill();
-      ctx.stroke();
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = COL.dim;
-      poly(P.core2D);
-      ctx.stroke();
-    }
-
-    ctx.strokeStyle = COL.cyan;
-    ctx.setLineDash([14, 10]);
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    if (axis === 'x') {
-      ctx.moveTo(20, Y(pos));
-      ctx.lineTo(PW - 20, Y(pos));
-    } else {
-      ctx.moveTo(X(pos), 80);
-      ctx.lineTo(X(pos), PW - 20);
-    }
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    if (here) {
-      const hx = Math.min(PW - 24, Math.max(24, X(here.x)));
-      const hy = Math.min(PW - 24, Math.max(80, Y(here.y)));
-      // view wedge: heading is the compass bearing in data space (0 = +y north)
-      ctx.fillStyle = 'rgba(79,227,255,0.25)';
-      ctx.beginPath();
-      ctx.moveTo(hx, hy);
-      ctx.arc(hx, hy, 46, -Math.PI / 2 + here.heading - 0.5, -Math.PI / 2 + here.heading + 0.5);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = COL.cyan;
-      ctx.beginPath();
-      ctx.arc(hx, hy, 9, 0, Math.PI * 2);
-      ctx.fill();
-      setFont(ctx, 16, 600);
-      ctx.textAlign = 'left';
-      ctx.fillText('YOU', hx + 16, hy - 14);
-    }
-
-    setFont(ctx, 15);
-    ctx.textAlign = 'left';
-    ctx.fillStyle = COL.faint;
-    ctx.fillText('N ↑', 34, PW - 30);
-    this.texture.needsUpdate = true;
   }
 
   dispose() {
