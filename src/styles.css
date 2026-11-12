@@ -1295,15 +1295,40 @@ input[type='range']:hover::-moz-range-thumb {
   pointer-events: none;
   transition: opacity 300ms ease;
 }
+/* Phones / tablets: the stage is a scrolling column, so an absolute bar would
+ * land at the foot of the whole page. Instead it becomes a full-width strip
+ * directly under the 3D view, above the parameters. */
 @media (max-width: 900px) {
   .render-bar {
-    top: auto;
-    bottom: 12px;
-    left: 16px;
-    right: auto;
-    align-items: flex-start;
+    position: static;
+    width: 100%;
+    align-items: stretch;
+    gap: 8px;
+    padding: 10px 16px;
+    border-top: 1px solid var(--rule);
+    background: #000;
+  }
+  .render-seg {
+    display: flex;
+    width: 100%;
+    background: #000;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
   .render-seg .seg-btn {
-    padding: 0 8px;
+    flex: 1;
+    padding: 0 6px;
+  }
+  .render-row {
+    display: flex;
+    gap: 8px;
+  }
+  .render-row .render-seg {
+    flex: 1;
+    min-width: 0;
+  }
+  .hero-btn {
+    flex: none;
+    height: auto;
   }
 }
