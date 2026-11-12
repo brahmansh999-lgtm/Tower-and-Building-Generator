@@ -21,6 +21,7 @@
 
 import * as THREE from 'three';
 import { buildRealisticMeshes, foliageGeometry, palmGeometry, seeded } from '../geometry/buildRealisticMeshes.js';
+import { buildRealisticVilla } from '../geometry/buildRealisticVilla.js';
 import { FLOOR_HEIGHT } from '../geometry/generateTower.js';
 import { createRealisticMaterials } from './RealisticMaterials.js';
 import { RealisticEnvironment, PRESETS } from './RealisticEnvironment.js';
@@ -35,7 +36,28 @@ const FOLIAGE_TINTS = [
   [0.7, 0.9, 0.62],
   [1.05, 1.0, 0.7],
 ].map((c) => new THREE.Color(...c));
-const BUILDING = ['glass', 'podiumGlass', 'alu', 'concrete', 'helipad', 'uplight'];
+/**
+ * What each studio builds: the geometry function, its output keys → material
+ * names, the keys that only receive shadows, the context options and the
+ * haze strength (the villa is seen from ~50 m, the towers from ~500 m).
+ */
+const KINDS = {
+  tower: {
+    build: buildRealisticMeshes,
+    meshes: { glass: 'glass', podiumGlass: 'podiumGlass', alu: 'alu', concrete: 'concrete', helipad: 'helipad', uplight: 'uplight' },
+    receiveOnly: ['uplight'],
+    context: {},
+    fogScale: 1,
+  },
+  villa: {
+    build: buildRealisticVilla,
+    meshes: { glass: 'glass', white: 'white', interior: 'interior', timber: 'timber', lawn: 'lawn', drive: 'pavement', water: 'water', stone: 'stone' },
+    receiveOnly: ['lawn', 'drive', 'water'],
+    // A suburb of low houses beyond the street grid, on grass.
+    context: { ground: 'lawn', far: { start: 380, r: 1600, count: 700, h: [5, 9], tall: 0.03, tallH: [12, 22], size: [12, 24] } },
+    fogScale: 2.2,
+  },
+};
 
 /** Seeded Fisher–Yates, so halving the planting thins it evenly and stably. */
 function shuffled(list, seed) {
@@ -49,13 +71,22 @@ function shuffled(list, seed) {
 }
 
 export class RealisticWorld {
-  constructor({ renderer, scene }) {
+  /**
+   * @param {object} o renderer, scene, kind ('tower' | 'villa'),
+   *   skyScale (desktop sky box size; must sit inside the camera far plane)
+   */
+  constructor({ renderer, scene, kind = 'tower', skyScale = 9000 }) {
     this.renderer = renderer;
     this.scene = scene;
+    this.kind = KINDS[kind] ? kind : 'tower';
+    this.spec = KINDS[this.kind];
+    this.skyScale = skyScale;
     this.tier = detectTier();
     this.mats = createRealisticMaterials(this.tier);
 
     this.env = new RealisticEnvironment(renderer, this.tier);
+    this.env.fogScale = this.spec.fogScale;
+    this.env.setSkyScale(skyScale);
     this.env.group.visible = false;
     this.env.onEnv = (tex) => {
       if (this.active) this.scene.environment = tex;
@@ -74,9 +105,9 @@ export class RealisticWorld {
     this.modelSpace.visible = false;
     this.building = new THREE.Group();
     this.meshes = {};
-    for (const k of BUILDING) {
-      const m = new THREE.Mesh(new THREE.BufferGeometry(), this.mats[k]);
-      m.castShadow = k !== 'uplight';
+    for (const [k, mat] of Object.entries(this.spec.meshes)) {
+      const m = new THREE.Mesh(new THREE.BufferGeometry(), this.mats[mat]);
+      m.castShadow = !this.spec.receiveOnly.includes(k);
       m.receiveShadow = true;
       m.frustumCulled = false;
       m.visible = false;
@@ -87,7 +118,7 @@ export class RealisticWorld {
     this.palms = null;
     this.foliageGeo = foliageGeometry();
     this.palmGeo = palmGeometry();
-    this.context = new RealisticContext(this.mats, this.tier);
+    this.context = new RealisticContext(this.mats, this.tier, this.spec.context);
     this.modelSpace.add(this.building, this.context.group);
 
     this.model = null;
@@ -170,7 +201,7 @@ export class RealisticWorld {
   /** VR: smaller sky (inside the 5 km far plane) and the VR shadow map size. */
   setVR(on) {
     this.vr = on;
-    this.env.setSkyScale(on ? 4000 : 9000);
+    this.env.setSkyScale(on ? 4000 : this.skyScale);
     this.env.setShadowSize(on ? this.tier.shadowVR : this.tier.shadowDesktop);
     if (!on) {
       this.env.floor.visible = false;
@@ -304,8 +335,8 @@ export class RealisticWorld {
 
   rebuild() {
     if (!this.model) return;
-    const data = buildRealisticMeshes(this.model);
-    for (const k of BUILDING) {
+    const data = this.spec.build(this.model);
+    for (const k of Object.keys(this.meshes)) {
       const mesh = this.meshes[k];
       const old = mesh.geometry;
       mesh.geometry = data[k] || new THREE.BufferGeometry();

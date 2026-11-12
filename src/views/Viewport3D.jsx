@@ -3,9 +3,19 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { FLOOR_HEIGHT, BRIDGE_STATION_STRIDE, CORE_OVERRUN, PARAPET } from '../geometry/generateTower.js';
 import { VRSession } from '../vr/VRSession.js';
-import { RealisticWorld } from '../render/RealisticWorld.js';
-import { PostFX } from '../render/PostFX.js';
-import { FrameMonitor } from '../render/QualityManager.js';
+import {
+  initDesktopRender,
+  getRealistic,
+  applyDesktopRender,
+  setDesktopCut,
+  resizePost,
+  switchRender,
+  setDesktopPreset,
+  startHero,
+  stepHero,
+  renderRealistic,
+  disposeDesktopRender,
+} from '../render/desktopRender.js';
 
 const CYAN = 0x4fe3ff;
 const BRIDGE_RING = 40; // vertices around each bridge section
@@ -873,117 +883,7 @@ function updateCuts(ctx, model, planLevel, axis, pos, cut3D) {
     ctx.clipPlane.normal.set(1, 0, 0);
     ctx.clipPlane.constant = -pos;
   }
-  ctx.cut3D = cut3D;
-  ctx.cutPlanes = cut3D ? [ctx.clipPlane] : [];
-  // In VR the session clips per material; park the desktop planes until it ends.
-  if (ctx.vr && ctx.vr.presenting && ctx.vr.saved) ctx.vr.saved.clipping = ctx.cutPlanes;
-  else applyDesktopClipping(ctx);
-}
-
-/* ---------------------------------------------------------------------------
- * Render modes
- *
- * STYLIZED is the original pipeline and its renderer state is left exactly as
- * it was (no tone mapping, no shadow map, global clipping planes). REALISTIC
- * is a RealisticWorld that shares this renderer and scene; it is created the
- * first time it is needed and also serves the VR session.
- * ------------------------------------------------------------------------- */
-
-const FADE_MS = 300; // each way: fade to black, swap, fade back (~600 ms)
-
-function getRealistic(ctx) {
-  if (!ctx.realistic) {
-    const R = new RealisticWorld({ renderer: ctx.renderer, scene: ctx.scene });
-    R.setPreset(ctx.preset);
-    R.setModel(ctx.model);
-    R.attachTo(ctx.root);
-    ctx.realistic = R;
-  }
-  return ctx.realistic;
-}
-
-/** Desktop cut: global planes when stylized, building materials when realistic. */
-function applyDesktopClipping(ctx) {
-  const real = ctx.renderMode === 'realistic' && ctx.realistic;
-  if (real) {
-    ctx.renderer.clippingPlanes = [];
-    ctx.realistic.setCut(ctx.cutPlanes[0] || null);
-    if (ctx.postfx) ctx.postfx.setAO(undefined, !ctx.cut3D);
-  } else {
-    ctx.renderer.clippingPlanes = ctx.cutPlanes;
-  }
-}
-
-/** Put the desktop scene into ctx.renderMode (not while VR owns the scene). */
-function applyDesktopRender(ctx) {
-  if (ctx.vr && ctx.vr.presenting) return;
-  const on = ctx.renderMode === 'realistic';
-  const { renderer, scene, controls } = ctx;
-  for (const o of ctx.stylizedObjs) o.visible = !on;
-  // The cyan cut indicators are a drawing device: realistic hides them (the
-  // plan and section panels still show the cuts, and CUT 3D still cuts).
-  for (const q of [ctx.planQuad, ctx.sectionQuad]) {
-    q.mesh.visible = !on;
-    q.edge.visible = !on;
-  }
-  if (on) {
-    const R = getRealistic(ctx);
-    R.setModel(ctx.model);
-    R.attachTo(ctx.root);
-    R.setVR(false);
-    R.setActive(true);
-    R.applyRenderer(true);
-    scene.fog = R.fog;
-    renderer.localClippingEnabled = true;
-    // Low hero views look up at the towers: allow the camera below the target.
-    controls.maxPolarAngle = Math.PI * 0.66;
-    if (!ctx.postfx) ctx.postfx = new PostFX(renderer, scene, ctx.camera, { ao: R.tier.ao });
-    ctx.postfx.setBloom(R.preset.bloom);
-    ctx.postfx.setAO(ctx.aoWanted && R.tier.ao, !ctx.cut3D);
-    ctx.postfx.setBloomEnabled(ctx.bloomWanted);
-    resizePost(ctx);
-    ctx.monitor.reset();
-  } else {
-    if (ctx.realistic) {
-      ctx.realistic.setActive(false);
-      ctx.realistic.applyRenderer(false);
-    }
-    scene.fog = ctx.fog;
-    renderer.localClippingEnabled = false;
-    // Keep the current view: only widen the limit if the camera is already below it.
-    controls.maxPolarAngle = Math.max(Math.PI * 0.495, controls.getPolarAngle());
-  }
-  applyDesktopClipping(ctx);
-}
-
-/** Composer size: the viewport size at up to 1.5x pixel ratio. */
-function resizePost(ctx) {
-  if (!ctx.postfx) return;
-  const w = ctx.mount.clientWidth;
-  const h = ctx.mount.clientHeight;
-  if (w && h) ctx.postfx.setSize(w, h, Math.min(ctx.renderer.getPixelRatio(), ctx.postRatio));
-}
-
-function switchRender(ctx, mode) {
-  if (mode === ctx.renderMode) return;
-  ctx.renderMode = mode;
-  // In VR the session fades in the headset; the desktop is re-applied on exit.
-  if (ctx.vr.presenting) return;
-  const el = ctx.fadeEl;
-  clearTimeout(ctx.fadeTimer);
-  el.style.opacity = '1';
-  ctx.fadeTimer = setTimeout(() => {
-    applyDesktopRender(ctx);
-    // Compile the new materials under black, then fade back in.
-    try {
-      ctx.renderer.compile(ctx.scene, ctx.camera);
-    } catch {
-      /* compile is an optimisation only */
-    }
-    requestAnimationFrame(() => {
-      el.style.opacity = '0';
-    });
-  }, FADE_MS);
+  setDesktopCut(ctx, cut3D);
 }
 
 /**
@@ -1018,7 +918,6 @@ function heroPose(model, fovDeg) {
   };
 }
 
-const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 
 export default function Viewport3D({
   model,
@@ -1131,61 +1030,19 @@ export default function Viewport3D({
       sceneR: 400,
       fitted: false,
       mount,
-      fadeEl: fadeRef.current,
-      fadeTimer: 0,
-      fog: scene.fog,
-      stylizedObjs: [ground, towerGroup, contextGroup, bridgeMesh, podiumMesh],
-      renderMode: 'stylized',
-      preset: 'golden',
-      model: null,
-      realistic: null,
-      postfx: null,
-      postRatio: 1.5,
-      aoWanted: true,
-      bloomWanted: true,
-      cut3D: false,
-      cutPlanes: [],
-      hero: null,
     };
     ctxRef.current = ctx;
 
-    // Desktop frame-rate guard for the realistic mode: 60 fps target; steps
-    // down AO, then resolution, then bloom, then the shadow map size.
-    const qualityNote = (t) => hooksRef.current.onQualityNote && hooksRef.current.onQualityNote(t);
-    ctx.monitor = new FrameMonitor({
-      target: 60,
-      steps: [
-        {
-          label: 'AO OFF',
-          run: () => {
-            ctx.aoWanted = false;
-            if (ctx.postfx) ctx.postfx.setAO(false);
-          },
-        },
-        {
-          label: 'RESOLUTION 1X',
-          run: () => {
-            ctx.postRatio = 1;
-            resizePost(ctx);
-          },
-        },
-        {
-          label: 'BLOOM OFF',
-          run: () => {
-            ctx.bloomWanted = false;
-            if (ctx.postfx) ctx.postfx.setBloomEnabled(false);
-          },
-        },
-        {
-          label: 'SHADOWS 2048',
-          run: () => {
-            if (!ctx.realistic) return;
-            ctx.realistic.env.setShadowSize(2048);
-            ctx.realistic.markShadows();
-          },
-        },
-      ],
-      onStep: (step) => qualityNote(`QUALITY AUTO-ADJUSTED · ${step.label}`),
+    // Render-mode switch (STYLIZED / REALISTIC), shared with the villa viewport.
+    initDesktopRender(ctx, {
+      kind: 'tower',
+      fadeEl: fadeRef.current,
+      stylizedObjs: [ground, towerGroup, contextGroup, bridgeMesh, podiumMesh],
+      cutQuads: [planQuad, sectionQuad],
+      stylizedMaxPolar: Math.PI * 0.495,
+      minCamY: 1.8,
+      skyScale: 9000, // camera far is 12 km
+      onQualityNote: (t) => hooksRef.current.onQualityNote && hooksRef.current.onQualityNote(t),
     });
 
     // VR shares this renderer and scene; its world is built on first entry.
@@ -1232,29 +1089,8 @@ export default function Viewport3D({
         return;
       }
       if (!activeRef.current) return;
-      if (ctx.hero) {
-        // HERO camera move: eased over 1.6 s, then auto-rotate carries on.
-        const hm = ctx.hero;
-        hm.t = Math.min(1, hm.t + dt / 1.6);
-        const k = easeInOut(hm.t);
-        camera.position.lerpVectors(hm.fromPos, hm.toPos, k);
-        controls.target.lerpVectors(hm.fromTarget, hm.toTarget, k);
-        if (hm.t >= 1) {
-          ctx.hero = null;
-          controls.autoRotate = true;
-        }
-      }
-      if (ctx.renderMode === 'realistic' && ctx.realistic) {
-        controls.update();
-        if (camera.position.y < 1.8) camera.position.y = 1.8; // stay above the street
-        ctx.realistic.update(dt, camera.position);
-        if (ctx.postfx) {
-          ctx.postfx.setSceneBox(ctx.realistic.sceneBox());
-          ctx.postfx.render(dt);
-        } else renderer.render(scene, camera);
-        ctx.monitor.sample(dt);
-        return;
-      }
+      stepHero(ctx, dt);
+      if (renderRealistic(ctx, dt)) return;
       controls.update();
       // Fog tracks the orbit distance so depth fades the same at any zoom.
       const d = camera.position.distanceTo(controls.target);
@@ -1266,10 +1102,8 @@ export default function Viewport3D({
 
     return () => {
       renderer.setAnimationLoop(null);
-      clearTimeout(ctx.fadeTimer);
       vr.dispose();
-      if (ctx.postfx) ctx.postfx.dispose();
-      if (ctx.realistic) ctx.realistic.dispose();
+      disposeDesktopRender(ctx);
       if (vrRef) vrRef.current = null;
       clearTimeout(resumeTimer);
       ro.disconnect();
@@ -1305,27 +1139,14 @@ export default function Viewport3D({
   // Lighting preset (shared with VR: the same RealisticWorld serves both).
   useEffect(() => {
     const ctx = ctxRef.current;
-    if (!ctx) return;
-    ctx.preset = preset;
-    if (ctx.realistic) {
-      ctx.realistic.setPreset(preset);
-      if (ctx.postfx) ctx.postfx.setBloom(ctx.realistic.preset.bloom);
-    }
+    if (ctx) setDesktopPreset(ctx, preset);
   }, [preset]);
 
   // HERO camera preset.
   useEffect(() => {
     const ctx = ctxRef.current;
     if (!ctx || !heroTick || !ctx.model) return;
-    const pose = heroPose(ctx.model, ctx.camera.fov);
-    ctx.controls.autoRotate = false;
-    ctx.hero = {
-      t: 0,
-      fromPos: ctx.camera.position.clone(),
-      fromTarget: ctx.controls.target.clone(),
-      toPos: pose.pos,
-      toTarget: pose.target,
-    };
+    startHero(ctx, heroPose(ctx.model, ctx.camera.fov));
   }, [heroTick]);
 
   // Cut sliders → move planes only.

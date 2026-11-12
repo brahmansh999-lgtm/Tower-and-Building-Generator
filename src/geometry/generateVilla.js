@@ -38,6 +38,31 @@ export const VILLA_POOL_DEPTH = 1.6;
 export const PLOT = { w: 64, d: 44, setback: 5 };
 export const GFA_RANGE = { min: 450, max: 900, step: 10, default: 640 };
 
+/** Furniture block heights (m) for the cut-open 3D models (stylized and realistic). */
+export const VILLA_FURN_H = {
+  bed: 0.55,
+  sofa: 0.8,
+  armchair: 0.8,
+  coffee: 0.42,
+  dining: 0.76,
+  island: 0.92,
+  counter: 0.92,
+  bathroom: 2.3,
+  wardrobe: 2.2,
+  desk: 0.76,
+  tv: 0.6,
+  bench: 0.45,
+  plant: 1.1,
+  car: 1.45,
+  lounger: 0.4,
+  tub: 0.58,
+  wc: 0.42,
+  vanity: 0.88,
+  shower: 0.12,
+  appliance: 0.88,
+  rug: 0.015,
+};
+
 const TAU = Math.PI * 2;
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 

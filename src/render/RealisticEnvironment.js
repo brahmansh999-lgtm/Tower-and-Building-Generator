@@ -234,7 +234,7 @@ export class RealisticEnvironment {
     this.hemi.groundColor.setRGB(...p.hemiGround);
     this.hemi.intensity = p.hemiI * lerp(0.25, 1, dark);
     this.fog.color.setRGB(p.fog[0] * lerp(0.2, 1, dark), p.fog[1] * lerp(0.2, 1, dark), p.fog[2] * lerp(0.25, 1, dark));
-    this.fog.density = p.fogD;
+    this.fog.density = p.fogD * (this.fogScale || 1);
     this.exposure = lerp(p.exposure * 1.6, p.exposure, k);
     if (this.active) this.renderer.toneMappingExposure = this.exposure;
   }

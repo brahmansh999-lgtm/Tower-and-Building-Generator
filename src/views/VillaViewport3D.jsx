@@ -1,9 +1,22 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { VILLA_SLAB, VILLA_FLOOR_HEIGHTS, VILLA_POOL_DEPTH, offsetFlat, waveAt } from '../geometry/generateVilla.js';
+import { VILLA_SLAB, VILLA_FLOOR_HEIGHTS, VILLA_POOL_DEPTH, VILLA_FURN_H as FURN_H, PLOT, offsetFlat, waveAt } from '../geometry/generateVilla.js';
 import { pal, lightAt, writeColor, buildContextGroup, makeQuad, setQuad } from './Viewport3D.jsx';
 import { VillaVRSession } from '../vr/VillaVRSession.js';
+import {
+  initDesktopRender,
+  getRealistic,
+  applyDesktopRender,
+  setDesktopCut,
+  resizePost,
+  switchRender,
+  setDesktopPreset,
+  startHero,
+  stepHero,
+  renderRealistic,
+  disposeDesktopRender,
+} from '../render/desktopRender.js';
 
 const CYAN = 0x4fe3ff;
 
@@ -23,31 +36,6 @@ const VP = {
   lawn: pal([0.05, 0.075, 0.05], [0.12, 0.17, 0.11]),
   paving: pal([0.12, 0.12, 0.12], [0.3, 0.3, 0.3]),
   boundary: pal([0.25, 0.25, 0.25], [0.6, 0.6, 0.6]),
-};
-
-/** Furniture block heights (m) for the cut-open model. */
-const FURN_H = {
-  bed: 0.55,
-  sofa: 0.8,
-  armchair: 0.8,
-  coffee: 0.42,
-  dining: 0.76,
-  island: 0.92,
-  counter: 0.92,
-  bathroom: 2.3,
-  wardrobe: 2.2,
-  desk: 0.76,
-  tv: 0.6,
-  bench: 0.45,
-  plant: 1.1,
-  car: 1.45,
-  lounger: 0.4,
-  tub: 0.58,
-  wc: 0.42,
-  vanity: 0.88,
-  shower: 0.12,
-  appliance: 0.88,
-  rug: 0.015,
 };
 
 /**
@@ -359,10 +347,55 @@ function updateCuts(ctx, villa, planLevel, axis, pos, cut3D) {
     ctx.clipPlane.normal.set(1, 0, 0);
     ctx.clipPlane.constant = -pos;
   }
-  const planes = cut3D ? [ctx.clipPlane] : [];
-  // In VR the session clips per material; park the desktop planes until it ends.
-  if (ctx.vr && ctx.vr.presenting && ctx.vr.saved) ctx.vr.saved.clipping = planes;
-  else ctx.renderer.clippingPlanes = planes;
+  setDesktopCut(ctx, cut3D);
+}
+
+/**
+ * HERO for the villa: a low three-quarter view from a garden corner (inside
+ * the boundary wall), eye 2.2 m up, looking slightly up at the house:
+ *   angles  a_top = atan((height − y) / d),  a_base = atan(−y / d)
+ *   d       grows from 34 m until a_top − a_base ≤ 85 % of the vertical FOV,
+ *           then the eye is clamped 1.5 m inside the plot
+ *   aim     the middle of those two angles
+ * Garden trees differ per option, so four corner headings are tried (the
+ * western ones first: the golden-hour sun is then behind the camera) and the
+ * one whose sight line to the house passes furthest from any tree trunk and
+ * canopy wins. Data (x, y) → world (x, −y).
+ */
+function villaHeroPose(villa, fovDeg) {
+  const top = villa.stats.height + 0.5;
+  const y = 2.2;
+  const fov = (fovDeg * Math.PI) / 180;
+  let d = 34;
+  const angles = () => [Math.atan((top - y) / d), Math.atan(-y / d)];
+  for (let i = 0; i < 40; i++) {
+    const [aT, aB] = angles();
+    if (aT - aB <= fov * 0.85) break;
+    d *= 1.06;
+  }
+  const [aT, aB] = angles();
+  const trees = villa.context.trees.filter((t) => Math.hypot(t.x, t.y) < 60);
+  // clearance of the segment camera → house centre from every tree canopy
+  const clearance = (px, py) => {
+    let best = Infinity;
+    for (const t of trees) {
+      const L2 = px * px + py * py;
+      const k = Math.max(0, Math.min(1, (t.x * px + t.y * py) / L2));
+      best = Math.min(best, Math.hypot(t.x - px * k, t.y - py * k) - t.r);
+    }
+    return best;
+  };
+  let pick = null;
+  for (const a of [-0.98, -2.16, 0.98, 2.16]) {
+    const px = Math.sign(Math.sin(a)) * Math.min(Math.abs(Math.sin(a) * d), PLOT.w / 2 - 1.5);
+    const py = Math.sign(Math.cos(a)) * Math.min(Math.abs(Math.cos(a) * d), PLOT.d / 2 - 1.5);
+    const c = clearance(px, py);
+    if (!pick || c > pick.c + 1) pick = { px, py, c };
+  }
+  return {
+    pos: new THREE.Vector3(pick.px, y, -pick.py),
+    target: new THREE.Vector3(0, y + d * Math.tan((aT + aB) / 2), 0),
+  };
 }
 
 export default function VillaViewport3D({
@@ -382,14 +415,21 @@ export default function VillaViewport3D({
   onCuts,
   vrRef,
   onVRChange,
+  // Render mode (shared with VR), lighting preset, HERO camera requests
+  renderMode = 'stylized',
+  preset = 'golden',
+  heroTick = 0,
+  onRender,
+  onQualityNote,
 }) {
   const mountRef = useRef(null);
+  const fadeRef = useRef(null);
   const ctxRef = useRef(null);
   const activeRef = useRef(active);
   activeRef.current = active;
   // Latest callbacks for the VR session, which outlives individual renders.
   const hooksRef = useRef({});
-  hooksRef.current = { onOption, onGfa, onCuts, onVRChange };
+  hooksRef.current = { onOption, onGfa, onCuts, onVRChange, onRender, onQualityNote };
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -467,8 +507,21 @@ export default function VillaViewport3D({
       sectionQuad,
       clipPlane: new THREE.Plane(new THREE.Vector3(0, 0, -1), 0),
       fitted: false,
+      mount,
     };
     ctxRef.current = ctx;
+
+    // Render-mode switch (STYLIZED / REALISTIC), shared with the tower viewport.
+    initDesktopRender(ctx, {
+      kind: 'villa',
+      fadeEl: fadeRef.current,
+      stylizedObjs: [ground, ctx.shell, ctx.interior, ctx.site, contextGroup],
+      cutQuads: [planQuad, sectionQuad],
+      stylizedMaxPolar: Math.PI * 0.49,
+      minCamY: 0.6,
+      skyScale: 2800, // camera far is 3 km
+      onQualityNote: (t) => hooksRef.current.onQualityNote && hooksRef.current.onQualityNote(t),
+    });
 
     // VR shares this renderer and scene; its world is built on first entry.
     const call = (name) => (...a) => hooksRef.current[name] && hooksRef.current[name](...a);
@@ -481,7 +534,11 @@ export default function VillaViewport3D({
         onGfa: call('onGfa'),
         onCuts: call('onCuts'),
         onPresentChange: call('onVRChange'),
+        onRender: call('onRender'),
+        // After VR: put the desktop back into whatever mode is current now.
+        onRestore: () => applyDesktopRender(ctx),
       },
+      realistic: { get: () => getRealistic(ctx), peek: () => ctx.realistic },
     });
     ctx.vr = vr;
     if (vrRef) vrRef.current = { enter: () => vr.enter(), exit: () => vr.exit() };
@@ -494,6 +551,7 @@ export default function VillaViewport3D({
       renderer.setSize(w, h);
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
+      resizePost(ctx);
     };
     const ro = new ResizeObserver(resize);
     ro.observe(mount);
@@ -510,6 +568,8 @@ export default function VillaViewport3D({
         return;
       }
       if (!activeRef.current) return;
+      stepHero(ctx, dt);
+      if (renderRealistic(ctx, dt)) return;
       controls.update();
       const d = camera.position.distanceTo(controls.target);
       scene.fog.near = Math.max(1, d - 20);
@@ -521,6 +581,7 @@ export default function VillaViewport3D({
     return () => {
       renderer.setAnimationLoop(null);
       vr.dispose();
+      disposeDesktopRender(ctx);
       if (vrRef) vrRef.current = null;
       clearTimeout(resumeTimer);
       ro.disconnect();
@@ -539,8 +600,30 @@ export default function VillaViewport3D({
 
   useEffect(() => {
     const ctx = ctxRef.current;
-    if (ctx) rebuild(ctx, villa);
+    if (!ctx) return;
+    ctx.model = villa;
+    rebuild(ctx, villa);
+    if (ctx.realistic) ctx.realistic.setModel(villa);
   }, [villa]);
+
+  // Render mode: fade to black, swap, fade back in.
+  useEffect(() => {
+    const ctx = ctxRef.current;
+    if (ctx) switchRender(ctx, renderMode);
+  }, [renderMode]);
+
+  // Lighting preset (shared with VR: the same RealisticWorld serves both).
+  useEffect(() => {
+    const ctx = ctxRef.current;
+    if (ctx) setDesktopPreset(ctx, preset);
+  }, [preset]);
+
+  // HERO camera preset.
+  useEffect(() => {
+    const ctx = ctxRef.current;
+    if (!ctx || !heroTick || !ctx.model) return;
+    startHero(ctx, villaHeroPose(ctx.model, ctx.camera.fov));
+  }, [heroTick]);
 
   useEffect(() => {
     const ctx = ctxRef.current;
@@ -551,9 +634,13 @@ export default function VillaViewport3D({
   useEffect(() => {
     const ctx = ctxRef.current;
     if (ctx && cuts) {
-      ctx.vr.setState({ model: villa, option, gfa, cuts, planLevel, sectionAxis, sectionPos, cut3D, sectionMetres });
+      ctx.vr.setState({ model: villa, option, gfa, cuts, planLevel, sectionAxis, sectionPos, cut3D, sectionMetres, renderMode, preset });
     }
-  }, [villa, option, gfa, cuts, planLevel, sectionAxis, sectionPos, cut3D, sectionMetres]);
+  }, [villa, option, gfa, cuts, planLevel, sectionAxis, sectionPos, cut3D, sectionMetres, renderMode, preset]);
 
-  return <div className="viewport" ref={mountRef} />;
+  return (
+    <div className="viewport" ref={mountRef}>
+      <div className="mode-fade" ref={fadeRef} />
+    </div>
+  );
 }

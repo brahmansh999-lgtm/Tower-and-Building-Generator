@@ -288,7 +288,7 @@ export class VRSession {
     if (this.styleGroup) this.styleGroup.visible = !want;
     // The cyan cut indicators are a drawing device; realistic hides them as
     // the desktop does (CUT 3D still cuts the model).
-    if (this.cutMeshes && this.styleGroup) for (const m of Object.values(this.cutMeshes)) m.visible = !want;
+    if (this.cutMeshes) for (const m of Object.values(this.cutMeshes)) m.visible = !want;
     this.env.group.visible = !want;
     this.env.city.visible = !want;
     if (want) {

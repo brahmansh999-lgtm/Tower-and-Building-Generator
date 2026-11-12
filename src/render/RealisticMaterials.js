@@ -215,6 +215,27 @@ function asphaltCanvas(seed) {
   return big;
 }
 
+/** Timber boards: 16 planks per tile (one tile = 3 m), grain and joints. */
+function timberCanvas(seed) {
+  const S = 256;
+  const c = makeCanvas(S, S);
+  const g = c.getContext('2d');
+  const rnd = seeded(seed);
+  const n = 16;
+  const h = S / n;
+  for (let i = 0; i < n; i++) {
+    const v = 0.85 + rnd() * 0.3;
+    g.fillStyle = `rgb(${Math.round(150 * v)}, ${Math.round(104 * v)}, ${Math.round(68 * v)})`;
+    g.fillRect(0, i * h, S, h);
+    g.fillStyle = 'rgba(60, 36, 20, 0.18)';
+    for (let k = 0; k < 6; k++) g.fillRect(0, i * h + rnd() * h, S, 1);
+    g.fillStyle = 'rgba(30, 18, 10, 0.6)';
+    g.fillRect(0, i * h, S, 1);
+    g.fillRect(rnd() * S, i * h, 1.5, h);
+  }
+  return c;
+}
+
 /** Helipad: dark deck, yellow perimeter, white touchdown ring and H. */
 function helipadCanvas() {
   const S = 512;
@@ -390,6 +411,10 @@ export function createRealisticMaterials(tier) {
     asphalt: texture(asphaltCanvas(15)),
     helipad: texture(helipadCanvas(), { repeat: false }),
   };
+  // Villa surfaces
+  tex.lawn = texture(noiseCanvas(512, [92, 124, 68], 14, 17));
+  tex.timber = texture(timberCanvas(18));
+  tex.stone = texture(noiseCanvas(256, [214, 208, 196], 16, 19));
   const city = cityCanvases(16);
   tex.city = texture(city.albedo);
   tex.cityLit = texture(city.lit);
@@ -442,6 +467,27 @@ export function createRealisticMaterials(tier) {
   const palm = lit(new THREE.MeshStandardMaterial({ name: 'real-palm', vertexColors: true, roughness: 0.85, metalness: 0, side: THREE.DoubleSide }));
   const helipad = lit(new THREE.MeshStandardMaterial({ name: 'real-helipad', map: tex.helipad, roughness: 0.7, metalness: 0.1, vertexColors: true }));
   const uplight = lit(new THREE.MeshStandardMaterial({ name: 'real-uplight', color: 0x1a1a1a, emissive: 0xffb070, emissiveIntensity: 0, roughness: 0.6, side: THREE.DoubleSide }));
+  // Villa: white GRC ribbons, interiors (vertex-coloured), timber floors and deck.
+  const white = lit(new THREE.MeshStandardMaterial({ name: 'real-white', color: 0xf3f1eb, roughness: 0.32, metalness: 0, vertexColors: true, side: THREE.DoubleSide }));
+  const interior = lit(new THREE.MeshStandardMaterial({ name: 'real-interior', vertexColors: true, roughness: 0.75, metalness: 0, side: THREE.DoubleSide }));
+  const timber = lit(new THREE.MeshStandardMaterial({ name: 'real-timber', map: tex.timber, roughness: 0.7, metalness: 0, vertexColors: true, side: THREE.DoubleSide }));
+  projectMap(timber, 3);
+  // Site (not cut by the section)
+  const lawn = new THREE.MeshStandardMaterial({ name: 'real-lawn', map: tex.lawn, roughness: 0.95, metalness: 0 });
+  projectMap(lawn, 14);
+  const stone = new THREE.MeshStandardMaterial({ name: 'real-stone', map: tex.stone, roughness: 0.6, metalness: 0, vertexColors: true });
+  projectMap(stone, 3);
+  const water = new THREE.MeshPhysicalMaterial({
+    name: 'real-water',
+    color: 0x1f86b5,
+    roughness: 0.04,
+    metalness: 0.1,
+    emissive: 0x0b6a9a,
+    emissiveIntensity: 0,
+    envMapIntensity: 1.4,
+    clearcoat: 1,
+    clearcoatRoughness: 0.05,
+  });
 
   // Context (never cut by the section).
   const ground = new THREE.MeshStandardMaterial({ name: 'real-ground', map: tex.ground, roughness: 0.95, metalness: 0 });
@@ -466,6 +512,12 @@ export function createRealisticMaterials(tier) {
     palm,
     helipad,
     uplight,
+    white,
+    interior,
+    timber,
+    lawn,
+    stone,
+    water,
     ground,
     pavement,
     plaza,
@@ -499,6 +551,7 @@ export function createRealisticMaterials(tier) {
       glass.emissiveIntensity = p.windowI;
       podiumGlass.emissiveIntensity = p.podiumI;
       uplight.emissiveIntensity = p.uplightI;
+      water.emissiveIntensity = p.uplightI * 0.35; // lit pool at dusk and night
       cityMat.userData.uniforms.uCityLit.value = p.cityI;
       glass.envMapIntensity = p.envI;
       podiumGlass.envMapIntensity = p.envI * 0.9;
@@ -516,7 +569,7 @@ export function createRealisticMaterials(tier) {
 
     dispose() {
       for (const t of Object.values(tex)) if (t) t.dispose();
-      for (const m of [glass, podiumGlass, alu, concrete, foliage, palm, helipad, uplight, ground, pavement, plaza, asphalt, cityMat, tree, floor]) m.dispose();
+      for (const m of [glass, podiumGlass, alu, concrete, foliage, palm, helipad, uplight, white, interior, timber, lawn, stone, water, ground, pavement, plaza, asphalt, cityMat, tree, floor]) m.dispose();
     },
   };
   return set;

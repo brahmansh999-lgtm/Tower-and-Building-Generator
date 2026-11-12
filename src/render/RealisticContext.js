@@ -29,8 +29,8 @@ import { CONTEXT } from '../geometry/generateTower.js';
 
 const PIECE = 21; //        m, street strip length (crop granularity)
 const PAVEMENT = 3.5; //    m each side
-const FAR_COUNT = 520;
-const FAR_R = 2200;
+// Distant ring (defaults: a city skyline; the villa studio passes a suburb).
+const FAR = { start: CONTEXT.EXTENT + 60, r: 2200, count: 520, h: [14, 74], tall: 0.14, tallH: [90, 210], size: [22, 56] };
 const NEAR_TREES = 250; // m
 
 const TONES = [
@@ -85,9 +85,14 @@ function flatBuilder() {
 }
 
 export class RealisticContext {
-  constructor(mats, tier) {
+  /**
+   * @param {object} opts far: overrides for the distant ring;
+   *   ground: material key for the ground disc ('ground' or 'lawn')
+   */
+  constructor(mats, tier, opts = {}) {
     this.mats = mats;
     this.tier = tier;
+    this.far = { ...FAR, ...(opts.far || {}) };
     this.group = new THREE.Group();
     this.group.name = 'realistic-context';
     this.ctx = null;
@@ -99,7 +104,7 @@ export class RealisticContext {
     this.s = new THREE.Vector3();
 
     // Unscaled on purpose: the projected texture reads object-space position.
-    this.ground = new THREE.Mesh(new THREE.CircleGeometry(3000, 128), mats.ground);
+    this.ground = new THREE.Mesh(new THREE.CircleGeometry(3000, 128), mats[opts.ground || 'ground']);
     this.ground.position.z = -0.05;
     this.ground.receiveShadow = true;
     this.plaza = new THREE.Mesh(new THREE.BufferGeometry(), mats.plaza);
@@ -128,18 +133,18 @@ export class RealisticContext {
     if (ctx === this.ctx) return;
     this.ctx = ctx;
 
-    // Plaza
+    // Plaza (the villa context has none)
     this.plaza.geometry.dispose();
-    this.plaza.geometry = new THREE.CircleGeometry(ctx.plazaR, 128);
+    this.plaza.geometry = ctx.plazaR > 0 ? new THREE.CircleGeometry(ctx.plazaR, 128) : new THREE.BufferGeometry();
     this.plaza.position.z = 0.03;
 
     // Ring road: u along the circumference (8 m per tile), v across 14 m.
-    const ring = ctx.ring;
+    const ring = ctx.ring || { r: 0, width: 0 };
     const r0 = ring.r - ring.width / 2;
     const r1 = ring.r + ring.width / 2;
     const road = flatBuilder();
     const walk = flatBuilder();
-    const seg = 160;
+    const seg = ctx.ring ? 160 : 0;
     for (let i = 0; i < seg; i++) {
       const a0 = (i / seg) * Math.PI * 2;
       const a1 = ((i + 1) / seg) * Math.PI * 2;
@@ -180,16 +185,16 @@ export class RealisticContext {
     // Blocks: the model's own plus a seeded far ring for the skyline.
     const list = ctx.blocks.map((b, i) => ({ ...b, tone: i % TONES.length }));
     const rnd = seeded(90210);
-    const r0far = CONTEXT.EXTENT + 60;
+    const F = this.far;
     let tries = 0;
     const far = [];
-    while (far.length < FAR_COUNT && tries++ < FAR_COUNT * 20) {
-      const rad = r0far + (FAR_R - r0far) * Math.sqrt(rnd());
+    while (far.length < F.count && tries++ < F.count * 20) {
+      const rad = F.start + (F.r - F.start) * Math.sqrt(rnd());
       const a = rnd() * Math.PI * 2;
-      const w = 22 + rnd() * 34;
-      const d = 22 + rnd() * 34;
-      const tall = rnd() < 0.14;
-      const h = tall ? 90 + rnd() * 120 : 14 + Math.pow(rnd(), 1.5) * 60;
+      const w = F.size[0] + rnd() * (F.size[1] - F.size[0]);
+      const d = F.size[0] + rnd() * (F.size[1] - F.size[0]);
+      const tall = rnd() < F.tall;
+      const h = tall ? F.tallH[0] + rnd() * (F.tallH[1] - F.tallH[0]) : F.h[0] + Math.pow(rnd(), 1.5) * (F.h[1] - F.h[0]);
       const x = Math.cos(a) * rad;
       const y = Math.sin(a) * rad;
       const R = Math.hypot(w, d) / 2;

@@ -17,6 +17,9 @@
  *   - boards: the desktop villa plan and section, plus a data sheet with the
  *     brief figures and a room schedule
  *   - intro: the house rises through a horizontal clipping plane
+ *   - realistic mode (shared with the desktop villa view): the base class
+ *     swaps the stylized group for the RealisticWorld; this class only routes
+ *     its own clipping and intro to it
  */
 
 import * as THREE from 'three';
@@ -135,7 +138,10 @@ export class VillaVRSession extends VRSession {
       fill: mesh(mats.cutFill, 3),
       lines: mesh(mats.cutLines, 4),
     };
-    this.modelGroup.add(...Object.values(this.meshes), this.contextGroup, ...Object.values(this.cutMeshes));
+    // Stylized meshes in one group so realistic mode can hide them in one go.
+    this.styleGroup = new THREE.Group();
+    this.styleGroup.add(...Object.values(this.meshes), this.contextGroup);
+    this.modelGroup.add(this.styleGroup, ...Object.values(this.cutMeshes));
   }
 
   createBoards() {
@@ -228,6 +234,7 @@ export class VillaVRSession extends VRSession {
       m.clippingPlanes = planes.length ? planes : null;
       m.needsUpdate = true;
     }
+    if (this.realOn) this.real().setCut(this.cut3D ? this.clipPlane : null);
   }
 
   /** Reveal plane keeps data z ≤ revealZ: normal (0, 0, −1), constant revealZ. */
@@ -240,6 +247,8 @@ export class VillaVRSession extends VRSession {
   }
 
   introLayers() {
+    // Realistic: the base class's sunrise + storey-by-storey reveal.
+    if (this.realOn) return super.introLayers();
     return {
       tower: [],
       fins: [],
@@ -391,6 +400,7 @@ export class VillaVRSession extends VRSession {
     return {
       title: `OPTION ${v.option.id} · ${v.option.name}`,
       subtitle: `${v.option.tagline.toUpperCase()} · VR`,
+      header: this.renderHeader(),
       readout: [
         ['GFA', `${fmt(st.gfa)} M²`],
         ['L0 / L1', `${fmt(st.levelAreas[0])} / ${fmt(st.levelAreas[1])}`],
@@ -424,7 +434,7 @@ export class VillaVRSession extends VRSession {
         vrCol.slice(2),
       ],
       footer: vr.scale === 'tabletop' ? 'GRIP: ROTATE · BOTH GRIPS: SCALE · TRIGGER: PRESS' : 'STICK ↑ TELEPORT · ← → TURN 30° · TRIGGER: PRESS',
-      note: this.note,
+      note: this.note || this.qualityNote,
     };
   }
 

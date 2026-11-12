@@ -22,7 +22,7 @@ Then open the local URL Vite prints (default https://localhost:5173). The dev se
 - **Form:** height (30–120 floors, tallest tower), base width (20–60 m), sway (0–30 m), twist (0–360°)
 - **Cluster:** towers (1–5), links per connection (0–8), connection mode (pairs / all / chain)
 - **Cuts:** plan level, section position and axis, and a toggle to slice the 3D model
-- **Render (top right of the Towers view):** STYLIZED (the line-drawing look) or REALISTIC; in realistic mode, a lighting preset (GOLDEN / DAY / DUSK / NIGHT) and a HERO camera
+- **Render (top right of the 3D view, in both studios):** STYLIZED (the line-drawing look) or REALISTIC; in realistic mode, a lighting preset (GOLDEN / DAY / DUSK / NIGHT) and a HERO camera
 
 ## Structure
 
@@ -35,7 +35,8 @@ Then open the local URL Vite prints (default https://localhost:5173). The dev se
 - `src/geometry/buildVRMeshes.js` — VR geometry (ribbons, fin strips, bridge tubes, glow, walkable surfaces) built from the same generateTower() output
 - `src/vr/` — VR session (towers) and VillaVRSession (villas), environment, interaction, control panel, drawing boards and intro
 - `src/geometry/buildRealisticMeshes.js` — realistic-mode geometry (glass skin, slab edges, fins, terrace pockets, bridges, podium, crown, helipad, planting) from the same generateTower() output
-- `src/render/` — realistic mode: materials and procedural textures, sky / sun / presets, city context, desktop post-processing, quality tiers and frame-rate guard, and RealisticWorld, which ties them together for the desktop view and VR
+- `src/geometry/buildRealisticVilla.js` — realistic-mode villa geometry (white ribbons, glazing, interiors, timber, pool, garden, planting) from the same generateVilla() output
+- `src/render/` — realistic mode: materials and procedural textures, sky / sun / presets, city context, desktop post-processing, quality tiers and frame-rate guard, RealisticWorld (ties them together for the desktop view and VR, for towers or villas) and desktopRender (the mode switch both studios' 3D views use)
 
 The layout adapts to phones: the model, controls and drawings stack in one scrolling column.
 
@@ -50,14 +51,15 @@ An **ENTER VR** button appears at the bottom right of both studios when the brow
 - **Drawing boards:** the desktop plan (with the full fit-out and a "you are here" marker at human scale) and the section stand to your right and update live with the sliders. A data sheet to your left lists the project figures: for towers, every tower, the current floor of each tower and every bridge; for villas, the brief figures and a room schedule per floor.
 - Any trigger skips the opening build-up animation.
 
-## Realistic mode (Towers)
+## Realistic mode (Towers and Villas)
 
-The **STYLIZED | REALISTIC** toggle (top right of the 3D view, and at the top of the VR menu) switches the tower model to a lit, photoreal look. The switch fades to black and back over about 0.6 s, without reloading or moving the camera. Desktop and VR share the setting. Every slider keeps working, and the plan and section drawings are unchanged. Stylized mode renders exactly as before.
+The **STYLIZED | REALISTIC** toggle (top right of the 3D view, and at the top of the VR menu) switches the model to a lit, photoreal look, in both studios. The switch fades to black and back over about 0.6 s, without reloading or moving the camera. Desktop and VR share the setting. Every slider keeps working, and the plan and section drawings are unchanged. Stylized mode renders exactly as before.
 
 - **Building:** a reflective blue-grey glass skin with a mullion grid that follows the floors, white-champagne slab edges and tapered fins, and 3–5 recessed planted terraces per tower that spiral up the facade. Fins rise past the roof as an open crown lattice, and the tallest tower has a helipad. The sky bridges are glass tubes with white ribs, a walkable deck and planting inside. The podium has curved glazing, a white sweeping canopy and a roof garden.
 - **Lighting presets:** GOLDEN HOUR (default), DAY, DUSK and NIGHT. Each sets the sun, sky, haze and how many windows are lit. At night the windows, podium and bridge undersides glow, and the city has faint lights.
 - **City:** blocks with window grids, asphalt streets with lane markings, pavements and trees, and a skyline that fades into the haze.
-- **HERO:** a low three-quarter view looking up at the towers. Auto-rotate carries on from there.
+- **Villas:** white ribbon slabs and soffits, recessed full-height glazing, furnished interiors seen through the glass, timber floors and deck, a lit pool, lawn, boundary walls and planting, in a suburb of neighbouring houses. Every option and the GFA slider work in both modes.
+- **HERO:** a low three-quarter view looking up at the building (for villas, from a garden corner with a clear view). Auto-rotate carries on from there.
 - **Section cut:** CUT 3D MODEL cuts the realistic model too, showing the floor plates inside.
 - **VR:** the same model, in tabletop and human scale. The opening animation becomes a sunrise while the tower assembles floor by floor. If the frame rate drops, quality steps down automatically (shadows, then planting, then resolution) and the menu shows **QUALITY AUTO-ADJUSTED**.
 

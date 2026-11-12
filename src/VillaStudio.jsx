@@ -4,6 +4,7 @@ import VillaViewport3D from './views/VillaViewport3D.jsx';
 import VillaPlanView from './views/VillaPlanView.jsx';
 import VillaSectionView from './views/VillaSectionView.jsx';
 import VillaControls from './ui/VillaControls.jsx';
+import { RenderBar } from './ui/Controls.jsx';
 import VREnterButton, { useVREntry } from './ui/VREnter.jsx';
 
 const fmt = (v) => Math.round(v).toLocaleString('en-US');
@@ -33,6 +34,12 @@ export default function VillaStudio({ active }) {
   // VR: the button only appears when the browser supports immersive-vr.
   const vr = useVREntry();
 
+  // Render mode + lighting preset: one state for the desktop and the VR panel.
+  const [render, setRender] = useState({ mode: 'stylized', preset: 'golden' });
+  const onRender = useCallback((k, v) => setRender((r) => ({ ...r, [k]: v })), []);
+  const [heroTick, setHeroTick] = useState(0);
+  const [qualityNote, setQualityNote] = useState('');
+
   const half = (cuts.axis === 'x' ? PLOT.d : PLOT.w) / 2;
   const sectionPos = (cuts.sectionPos / 100) * half;
   const st = villa.stats;
@@ -56,8 +63,14 @@ export default function VillaStudio({ active }) {
           onCuts={onCuts}
           vrRef={vr.vrRef}
           onVRChange={vr.setInVR}
+          renderMode={render.mode}
+          preset={render.preset}
+          heroTick={heroTick}
+          onRender={onRender}
+          onQualityNote={setQualityNote}
         />
         <VREnterButton vr={vr} />
+        <RenderBar render={render} onRender={onRender} onHero={() => setHeroTick((t) => t + 1)} note={qualityNote} />
         <header className="readout">
           <div className="title">
             OPTION {villa.option.id} · {villa.option.name}

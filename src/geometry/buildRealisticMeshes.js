@@ -66,7 +66,7 @@ export function seeded(seed) {
  * Geometry accumulator
  * ------------------------------------------------------------------------- */
 
-class Geo {
+export class Geo {
   constructor() {
     this.pos = [];
     this.nrm = [];
@@ -85,6 +85,15 @@ class Geo {
     this.nrm.push(nx, ny, nz);
     this.uv.push(u, w);
     this.col.push(ao, ao, ao);
+    return this.count - 1;
+  }
+
+  /** Like v(), with an RGB vertex colour (tone × occlusion) instead of grey AO. */
+  vc(x, y, z, nx, ny, nz, r, g, b) {
+    this.pos.push(x, y, z);
+    this.nrm.push(nx, ny, nz);
+    this.uv.push(0, 0);
+    this.col.push(r, g, b);
     return this.count - 1;
   }
 
@@ -146,7 +155,7 @@ class Geo {
  * difference t = p[j+1] − p[j−1] is the tangent; outward is (t.y, −t.x)
  * (a CCW ring turned clockwise by 90°).
  */
-function ringNormals(p) {
+export function ringNormals(p) {
   const M = p.length / 2;
   const n = new Float32Array(M * 2);
   for (let j = 0; j < M; j++) {
