@@ -36,9 +36,11 @@ function figure(sx, sy, hpx) {
   );
 }
 
-export default function VillaSectionView({ villa, level, sectionAxis, sectionPos }) {
+export default function VillaSectionView({ villa, level, sectionAxis, sectionPos, size }) {
   const hostRef = useRef(null);
-  const { w, h } = useElementSize(hostRef);
+  const measured = useElementSize(hostRef);
+  // `size` renders at a fixed size off-screen (the VR drawing boards).
+  const { w, h } = size || measured;
 
   const drawing = useMemo(() => {
     if (w < 40 || h < 40) return null;

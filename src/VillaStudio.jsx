@@ -4,6 +4,7 @@ import VillaViewport3D from './views/VillaViewport3D.jsx';
 import VillaPlanView from './views/VillaPlanView.jsx';
 import VillaSectionView from './views/VillaSectionView.jsx';
 import VillaControls from './ui/VillaControls.jsx';
+import VREnterButton, { useVREntry } from './ui/VREnter.jsx';
 
 const fmt = (v) => Math.round(v).toLocaleString('en-US');
 
@@ -29,6 +30,9 @@ export default function VillaStudio({ active }) {
   const options = useMemo(() => VILLA_OPTIONS.map((o) => generateVilla({ option: o.id, gfa, layout: false })), [gfa]);
   const villa = useMemo(() => generateVilla({ option, gfa }), [option, gfa]);
 
+  // VR: the button only appears when the browser supports immersive-vr.
+  const vr = useVREntry();
+
   const half = (cuts.axis === 'x' ? PLOT.d : PLOT.w) / 2;
   const sectionPos = (cuts.sectionPos / 100) * half;
   const st = villa.stats;
@@ -43,7 +47,17 @@ export default function VillaStudio({ active }) {
           sectionPos={sectionPos}
           cut3D={cuts.cut3D}
           active={active}
+          option={option}
+          gfa={gfa}
+          cuts={cuts}
+          sectionMetres={sectionPos}
+          onOption={setOption}
+          onGfa={setGfa}
+          onCuts={onCuts}
+          vrRef={vr.vrRef}
+          onVRChange={vr.setInVR}
         />
+        <VREnterButton vr={vr} />
         <header className="readout">
           <div className="title">
             OPTION {villa.option.id} · {villa.option.name}

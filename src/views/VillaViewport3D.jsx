@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { VILLA_SLAB, VILLA_FLOOR_HEIGHTS, VILLA_POOL_DEPTH, offsetFlat, waveAt } from '../geometry/generateVilla.js';
 import { pal, lightAt, writeColor, buildContextGroup, makeQuad, setQuad } from './Viewport3D.jsx';
+import { VillaVRSession } from '../vr/VillaVRSession.js';
 
 const CYAN = 0x4fe3ff;
 
@@ -285,26 +286,35 @@ function buildSite(b, villa) {
   if (eastLen > 0) b.box(hw - eastLen / 2, -hd, 0, eastLen, t, H, 0, VP.boundary);
 }
 
-function rebuild(ctx, villa) {
-  for (const m of [ctx.shell, ctx.interior, ctx.site]) {
-    m.geometry.dispose();
-  }
+/** Shell, interior and site geometries for a villa (shared with the VR view). */
+export function buildVillaGeometry(villa) {
   const shell = new Builder();
   buildShell(shell, villa);
-  ctx.shell.geometry = shell.geometry();
   const interior = new Builder();
   buildInterior(interior, villa);
-  ctx.interior.geometry = interior.geometry();
   const site = new Builder();
   buildSite(site, villa);
-  ctx.site.geometry = site.geometry();
+  return { shell: shell.geometry(), interior: interior.geometry(), site: site.geometry() };
+}
 
-  // Context + people (neighbours, street trees, garden, and every room).
+/** Context + people: neighbours, street trees, garden, and everyone in the rooms. */
+export function villaContext(villa) {
   const inside = [];
   villa.levels.forEach((L, i) => {
     for (const p of L.people) inside.push({ x: p.x, y: p.y, z: L.z + (i > 0 ? 0.31 : 0.02), h: 1.6 + ((p.x * 13.7) % 0.3), tone: Math.abs(Math.round(p.y * 7)) % 6 });
   });
-  buildContextGroup(ctx, { ...villa.context, people: villa.context.people.concat(inside) });
+  return { ...villa.context, people: villa.context.people.concat(inside) };
+}
+
+function rebuild(ctx, villa) {
+  for (const m of [ctx.shell, ctx.interior, ctx.site]) {
+    m.geometry.dispose();
+  }
+  const g = buildVillaGeometry(villa);
+  ctx.shell.geometry = g.shell;
+  ctx.interior.geometry = g.interior;
+  ctx.site.geometry = g.site;
+  buildContextGroup(ctx, villaContext(villa));
 
   if (!ctx.fitted) {
     ctx.camera.position.set(64, 40, 74);
@@ -349,14 +359,37 @@ function updateCuts(ctx, villa, planLevel, axis, pos, cut3D) {
     ctx.clipPlane.normal.set(1, 0, 0);
     ctx.clipPlane.constant = -pos;
   }
-  ctx.renderer.clippingPlanes = cut3D ? [ctx.clipPlane] : [];
+  const planes = cut3D ? [ctx.clipPlane] : [];
+  // In VR the session clips per material; park the desktop planes until it ends.
+  if (ctx.vr && ctx.vr.presenting && ctx.vr.saved) ctx.vr.saved.clipping = planes;
+  else ctx.renderer.clippingPlanes = planes;
 }
 
-export default function VillaViewport3D({ villa, planLevel, sectionAxis, sectionPos, cut3D, active = true }) {
+export default function VillaViewport3D({
+  villa,
+  planLevel,
+  sectionAxis,
+  sectionPos,
+  cut3D,
+  active = true,
+  // VR: raw values for the in-headset panel, setters, and a handle
+  option,
+  gfa,
+  cuts,
+  sectionMetres,
+  onOption,
+  onGfa,
+  onCuts,
+  vrRef,
+  onVRChange,
+}) {
   const mountRef = useRef(null);
   const ctxRef = useRef(null);
   const activeRef = useRef(active);
   activeRef.current = active;
+  // Latest callbacks for the VR session, which outlives individual renders.
+  const hooksRef = useRef({});
+  hooksRef.current = { onOption, onGfa, onCuts, onVRChange };
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -364,6 +397,7 @@ export default function VillaViewport3D({ villa, planLevel, sectionAxis, section
     const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, coarse ? 1.5 : 2));
     renderer.setClearColor(0x000000, 1);
+    renderer.xr.enabled = true;
     mount.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
@@ -427,6 +461,7 @@ export default function VillaViewport3D({ villa, planLevel, sectionAxis, section
       shell: mk(),
       interior: mk(),
       site: mk(),
+      root,
       contextGroup,
       planQuad,
       sectionQuad,
@@ -435,7 +470,24 @@ export default function VillaViewport3D({ villa, planLevel, sectionAxis, section
     };
     ctxRef.current = ctx;
 
+    // VR shares this renderer and scene; its world is built on first entry.
+    const call = (name) => (...a) => hooksRef.current[name] && hooksRef.current[name](...a);
+    const vr = new VillaVRSession({
+      renderer,
+      scene,
+      desktopRoot: root,
+      hooks: {
+        onOption: call('onOption'),
+        onGfa: call('onGfa'),
+        onCuts: call('onCuts'),
+        onPresentChange: call('onVRChange'),
+      },
+    });
+    ctx.vr = vr;
+    if (vrRef) vrRef.current = { enter: () => vr.enter(), exit: () => vr.exit() };
+
     const resize = () => {
+      if (renderer.xr.isPresenting) return; // the XR device owns the size while presenting
       const w = mount.clientWidth;
       const h = mount.clientHeight;
       if (!w || !h) return;
@@ -447,9 +499,16 @@ export default function VillaViewport3D({ villa, planLevel, sectionAxis, section
     ro.observe(mount);
     resize();
 
-    let raf = 0;
-    const tick = () => {
-      raf = requestAnimationFrame(tick);
+    // setAnimationLoop: driven by the XR device while a session is presenting.
+    let last = performance.now();
+    const tick = (time) => {
+      const now = time || performance.now();
+      const dt = Math.min(0.1, (now - last) / 1000);
+      last = now;
+      if (renderer.xr.isPresenting) {
+        renderer.render(scene, vr.frame(dt));
+        return;
+      }
       if (!activeRef.current) return;
       controls.update();
       const d = camera.position.distanceTo(controls.target);
@@ -457,10 +516,12 @@ export default function VillaViewport3D({ villa, planLevel, sectionAxis, section
       scene.fog.far = d + 260;
       renderer.render(scene, camera);
     };
-    tick();
+    renderer.setAnimationLoop(tick);
 
     return () => {
-      cancelAnimationFrame(raf);
+      renderer.setAnimationLoop(null);
+      vr.dispose();
+      if (vrRef) vrRef.current = null;
       clearTimeout(resumeTimer);
       ro.disconnect();
       controls.removeEventListener('start', onStart);
@@ -485,6 +546,14 @@ export default function VillaViewport3D({ villa, planLevel, sectionAxis, section
     const ctx = ctxRef.current;
     if (ctx) updateCuts(ctx, villa, planLevel, sectionAxis, sectionPos, cut3D);
   }, [villa, planLevel, sectionAxis, sectionPos, cut3D]);
+
+  // Mirror state into the VR session (cheap: it only flags what to rebuild).
+  useEffect(() => {
+    const ctx = ctxRef.current;
+    if (ctx && cuts) {
+      ctx.vr.setState({ model: villa, option, gfa, cuts, planLevel, sectionAxis, sectionPos, cut3D, sectionMetres });
+    }
+  }, [villa, option, gfa, cuts, planLevel, sectionAxis, sectionPos, cut3D, sectionMetres]);
 
   return <div className="viewport" ref={mountRef} />;
 }

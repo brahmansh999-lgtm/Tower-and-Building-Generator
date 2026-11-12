@@ -13,6 +13,10 @@
  *   - the UI arc around the user: docked controls on the left, the desktop
  *     plan and section drawings on the right, the data sheet further left
  *
+ * The class is the tower studio's VR. Everything specific to the content
+ * (geometry, cuts, viewpoints, panel layout, boards, intro layers) sits in the
+ * "content" methods, which VillaVRSession overrides for the villa studio.
+ *
  * World hierarchy (three.js y-up):
  *   world
  *   ├─ environment          grid, horizon, stars (world space, at the real floor)
@@ -25,17 +29,16 @@
  */
 
 import * as THREE from 'three';
-import { BRIDGE_STATION_STRIDE } from '../geometry/generateTower.js';
 import { buildVRMeshes, buildCutGeometry } from '../geometry/buildVRMeshes.js';
 import { VREnvironment } from './VREnvironment.js';
 import { VRIntro } from './VRIntro.js';
 import { VRInteraction } from './VRInteraction.js';
-import { VRPanel } from './VRPanel.js';
+import { VRPanel, vrColumn, PANEL_COLORS } from './VRPanel.js';
+import { PARAM_RANGES, FLOOR_HEIGHT, BRIDGE_STATION_STRIDE } from '../geometry/generateTower.js';
 import { VRPlanBoard, VRSectionBoard, VRDataBoard } from './VRDrawings.js';
 
 const TABLE_H = 0.86; //  m, plinth top (waist height)
 const TABLE_Z = -0.95; // m in front of the starting position
-const DEFAULT_DENOM = 500;
 const FADE = 0.2; //      s each way for comfort fades
 const REBUILD_MS = 120; // minimum gap between VR mesh rebuilds while sliders move
 const QUALITY_KEY = 'ttt.vr.quality';
@@ -147,14 +150,14 @@ function vignetteGeometry() {
   return g;
 }
 
-const mesh = (material, renderOrder = 0) => {
+export const mesh = (material, renderOrder = 0) => {
   const m = new THREE.Mesh(new THREE.BufferGeometry(), material);
   m.renderOrder = renderOrder;
   return m;
 };
 
 /** Data (x, y, z) → world (x, z, −y) at human scale (stage = identity). */
-const toWorld = (x, y, z) => new THREE.Vector3(x, z, -y);
+export const toWorld = (x, y, z) => new THREE.Vector3(x, z, -y);
 
 export class VRSession {
   /**
@@ -173,8 +176,10 @@ export class VRSession {
     this.dirty = true;
     this.cutsDirty = true;
     this.lastBuild = 0;
+    // Tabletop scale range (1:denom) and the viewpoint used on entering 1:1.
+    this.cfg = { defaultDenom: 500, minDenom: 200, maxDenom: 1000, defaultView: 'street' };
     this.mode = 'tabletop';
-    this.denom = DEFAULT_DENOM;
+    this.denom = this.cfg.defaultDenom;
     this.yaw = 0;
     this.cut3D = false;
     this.city = true;
@@ -235,23 +240,10 @@ export class VRSession {
     this.stage.add(this.modelGroup);
     world.add(this.stage);
 
-    this.meshes = {
-      shell: mesh(mats.shell),
-      bands: mesh(mats.line),
-      fins: mesh(mats.line),
-      finGlow: mesh(mats.glow, 2),
-      bridgeBody: mesh(mats.shell),
-      rails: mesh(mats.line),
-      railGlow: mesh(mats.railGlow, 2),
-    };
     this.walk = mesh(mats.walk);
     this.walk.visible = false;
-    this.cutMeshes = {
-      fill: mesh(mats.cutFill, 3),
-      lines: mesh(mats.cutLines, 4),
-      glow: mesh(mats.cutGlow, 3),
-    };
-    this.modelGroup.add(...Object.values(this.meshes), this.walk, ...Object.values(this.cutMeshes), this.env.city);
+    this.modelGroup.add(this.walk, this.env.city);
+    this.createContent(mats);
 
     // Plinth: dark disc, a crisp cyan rim and a soft glow ring around it (unit radius, scaled).
     this.plinth = new THREE.Group();
@@ -285,9 +277,7 @@ export class VRSession {
       onChange: (g, k, v) => this.onPanel(g, k, v),
       onHaptic: () => this.interaction && this.interaction.tick(),
     });
-    this.planBoard = new VRPlanBoard();
-    this.sectionBoard = new VRSectionBoard();
-    this.dataBoard = new VRDataBoard();
+    this.createBoards();
     this.ui = new THREE.Group();
     this.ui.name = 'vr-ui';
     this.ui.add(this.planBoard.mesh, this.sectionBoard.mesh, this.dataBoard.mesh);
@@ -321,6 +311,7 @@ export class VRSession {
         },
         getScale: () => 1 / this.denom,
         setScale: (s) => this.setTabletopScale(1 / s),
+        scaleRange: () => [1 / this.cfg.maxDenom, 1 / this.cfg.minDenom],
         grabEnd: () => this.onGrabEnd(),
       },
     });
@@ -342,13 +333,37 @@ export class VRSession {
       obj.position.set(-Math.sin(th) * UI_R, y, -Math.cos(th) * UI_R);
       obj.rotation.set(0, th, 0);
     };
-    if (this.panel.docked) put(this.panel.mesh, 50, 1.25);
+    if (this.panel.docked) put(this.panel.mesh, 52, 1.3);
     put(this.planBoard.mesh, -50, 1.45);
     put(this.sectionBoard.mesh, -95, 1.45);
     put(this.dataBoard.mesh, 100, 1.35);
   }
 
-  /* ---------------- building ---------------- */
+  /* ---------------- content: tower (overridden by VillaVRSession) ---------------- */
+
+  createContent(mats) {
+    this.meshes = {
+      shell: mesh(mats.shell),
+      bands: mesh(mats.line),
+      fins: mesh(mats.line),
+      finGlow: mesh(mats.glow, 2),
+      bridgeBody: mesh(mats.shell),
+      rails: mesh(mats.line),
+      railGlow: mesh(mats.railGlow, 2),
+    };
+    this.cutMeshes = {
+      fill: mesh(mats.cutFill, 3),
+      lines: mesh(mats.cutLines, 4),
+      glow: mesh(mats.cutGlow, 3),
+    };
+    this.modelGroup.add(...Object.values(this.meshes), ...Object.values(this.cutMeshes));
+  }
+
+  createBoards() {
+    this.planBoard = new VRPlanBoard();
+    this.sectionBoard = new VRSectionBoard();
+    this.dataBoard = new VRDataBoard();
+  }
 
   targetLineScale() {
     // Tabletop: keep a band ~1.2 mm wide in the headset → 0.0012·denom m in data
@@ -356,9 +371,9 @@ export class VRSession {
     return this.mode === 'tabletop' ? Math.max(1, this.denom * 0.015) : 1;
   }
 
-  rebuild() {
+  /** Build the content geometry; returns { maxZ, lineScale }. */
+  buildContent() {
     const model = this.model;
-    if (!model) return;
     const data = buildVRMeshes(model, { lineScale: this.targetLineScale() });
     for (const [k, m] of Object.entries(this.meshes)) {
       m.geometry.dispose();
@@ -367,9 +382,15 @@ export class VRSession {
     }
     this.walk.geometry.dispose();
     this.walk.geometry = data.walk;
-    this.maxZ = data.maxZ;
-    this.builtLineScale = data.lineScale;
     this.env.buildCity(model);
+    return { maxZ: data.maxZ, lineScale: data.lineScale };
+  }
+
+  rebuild() {
+    if (!this.model) return;
+    const r = this.buildContent();
+    this.maxZ = r.maxZ;
+    this.builtLineScale = r.lineScale;
     this.applyMode(false);
     this.dirty = false;
     this.cutsDirty = true;
@@ -392,10 +413,16 @@ export class VRSession {
     this.cutsDirty = false;
   }
 
+  /** Materials the section cut applies to. */
+  clipMaterials() {
+    return [this.mats.shell, this.mats.line, this.mats.glow, this.mats.railGlow];
+  }
+
   /** Clipping is per material (world-space plane) so the void and city are never cut. */
   applyClipping() {
-    const planes = this.cut3D ? [this.clipPlane || (this.clipPlane = new THREE.Plane())] : null;
-    for (const m of [this.mats.shell, this.mats.line, this.mats.glow, this.mats.railGlow]) {
+    if (!this.clipPlane) this.clipPlane = new THREE.Plane();
+    const planes = this.cut3D ? [this.clipPlane] : null;
+    for (const m of this.clipMaterials()) {
       m.clippingPlanes = planes;
       m.needsUpdate = true;
     }
@@ -448,7 +475,7 @@ export class VRSession {
     this.rebuild();
     if (!moveUser) return;
     if (mode === 'tabletop') this.comfortMove(() => this.resetRig());
-    else this.comfortMove(() => this.goViewpoint('street'));
+    else this.comfortMove(() => this.goViewpoint(this.cfg.defaultView));
   }
 
   /** Live two-hand scaling: only the stage transform changes until release. */
@@ -620,9 +647,15 @@ export class VRSession {
 
   /* ---------------- panel ---------------- */
 
-  onPanel(group, key, value) {
+  /** Panel changes for the studio's own controls (form, cuts, plan frame). */
+  onContentPanel(group, key, value) {
     if (group === 'form') this.hooks.onForm(key, value);
     else if (group === 'cuts') this.hooks.onCuts(key, value);
+    else if (key === 'planFocus') this.planFocus = value;
+  }
+
+  onPanel(group, key, value) {
+    if (group !== 'vr' || key === 'planFocus') this.onContentPanel(group, key, value);
     else if (key === 'scale') this.setMode(value);
     else if (key === 'view') {
       if (this.mode !== 'human') {
@@ -634,7 +667,7 @@ export class VRSession {
       this.city = value;
       this.env.setCityVisible(value);
     } else if (key === 'smooth') this.smooth = value;
-    else if (key === 'planFocus') this.planFocus = value;
+    else if (key === 'panelSize') this.panel.setSize(value);
     else if (key === 'boards') {
       this.boardsOn = value;
       this.planBoard.mesh.visible = value;
@@ -653,29 +686,73 @@ export class VRSession {
     }
   }
 
-  panelState() {
-    const s = this.state;
+  /** VR options shared by every studio (read by the panel's VR column). */
+  vrState() {
     return {
-      form: s.form,
-      cuts: s.cuts,
-      maxLevel: s.maxLevel,
-      sectionMetres: s.sectionMetres,
-      stats: this.model.stats,
-      vr: {
-        scale: this.mode,
-        denom: this.denom,
-        city: this.city,
-        smooth: this.smooth,
-        planFocus: this.planFocus,
-        towerNames: this.model.towers.map((T) => T.name),
-        boards: this.boardsOn,
-        data: this.dataOn,
-        docked: this.panel.docked,
-        quality: this.quality,
-        device: detectQuality().device,
-        activeScale: this.activeScale,
-        note: this.note,
-      },
+      scale: this.mode,
+      denom: this.denom,
+      city: this.city,
+      smooth: this.smooth,
+      boards: this.boardsOn,
+      data: this.dataOn,
+      docked: this.panel.docked,
+      panelSize: this.panel.size,
+      quality: this.quality,
+      device: detectQuality().device,
+      activeScale: this.activeScale,
+    };
+  }
+
+  /** Panel layout for the tower studio: FORM · CLUSTER | CUTS · VR | VR options. */
+  describePanel() {
+    const s = this.state;
+    const st = this.model.stats;
+    const vr = this.vrState();
+    const R = PARAM_RANGES;
+    const { form, cuts } = s;
+    const C = PANEL_COLORS;
+    const level = Math.min(cuts.planLevel, s.maxLevel);
+    const signed = (v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)} M`;
+    const fmt = (v) => Math.round(v).toLocaleString('en-US');
+    const vrCol = vrColumn(vr, [['street', 'STREET'], ['podium', 'PODIUM'], ['bridge', 'BRIDGE'], ['crown', 'CROWN'], ['drone', 'DRONE']]);
+    return {
+      title: 'TWISTED TWIN TOWERS',
+      subtitle: 'SKY-BRIDGE ARCH TYPOLOGY · PARAMETRIC STUDY · VR',
+      readout: [
+        ['GFA', `${fmt(st.gfa)} M²`],
+        ['FLOORS', `${st.totalFloors}`],
+        ['HEIGHT', `${st.height.toFixed(1)} M`],
+        ['TOWERS', `${st.towers}`],
+        ['BRIDGES', `${st.bridges}`, C.amber],
+        ['SWAY', `${st.sway.toFixed(1)} M`],
+        ['TWIST', `${st.twist}°`],
+        ['SCALE', vr.scale === 'tabletop' ? `1:${Math.round(vr.denom)}` : '1:1'],
+      ],
+      columns: [
+        [
+          { t: 'micro', label: 'FORM' },
+          { t: 'slider', group: 'form', key: 'floors', label: 'HEIGHT', ...R.floors, value: form.floors, text: `${form.floors} FL · ${(form.floors * FLOOR_HEIGHT).toFixed(1)} M` },
+          { t: 'slider', group: 'form', key: 'width', label: 'WIDTH', ...R.width, value: form.width, text: `${form.width} M` },
+          { t: 'slider', group: 'form', key: 'sway', label: 'SWAY', ...R.sway, value: form.sway, text: `${form.sway.toFixed(1)} M` },
+          { t: 'slider', group: 'form', key: 'twist', label: 'TWIST', ...R.twist, value: form.twist, text: `${form.twist}°` },
+          { t: 'micro', label: 'CLUSTER' },
+          { t: 'slider', group: 'form', key: 'towers', label: 'TOWERS', ...R.towers, value: form.towers, text: `${form.towers}` },
+          { t: 'slider', group: 'form', key: 'bridges', label: 'BRIDGES', ...R.bridges, value: form.bridges, text: `${form.bridges} / LINK`, accent: C.amber },
+          { t: 'seg', group: 'form', key: 'mode', label: 'CONNECTION', value: form.mode, options: [['adjacent', 'PAIRS'], ['all', 'ALL'], ['chain', 'CHAIN']] },
+        ],
+        [
+          { t: 'micro', label: 'CUTS' },
+          { t: 'slider', group: 'cuts', key: 'planLevel', label: 'PLAN LEVEL', min: 0, max: s.maxLevel, step: 1, value: level, text: `L${level} · +${(level * FLOOR_HEIGHT).toFixed(1)} M`, accent: C.cyan },
+          { t: 'slider', group: 'cuts', key: 'sectionPos', label: 'SECTION', min: -100, max: 100, step: 0.5, value: cuts.sectionPos, text: `${cuts.axis === 'x' ? 'Y' : 'X'} ${signed(s.sectionMetres)}`, accent: C.cyan },
+          { t: 'seg', group: 'cuts', key: 'axis', label: 'SECTION AXIS', value: cuts.axis, options: [['x', '∥ X'], ['y', '∥ Y']] },
+          { t: 'toggle', group: 'cuts', key: 'cut3D', label: 'CUT 3D MODEL', value: cuts.cut3D },
+          { t: 'seg', group: 'vr', key: 'planFocus', label: 'PLAN FRAME', value: this.planFocus, options: [['site', 'SITE'], ...this.model.towers.map((T, i) => [i, T.name])] },
+          ...vrCol.slice(0, 3),
+        ],
+        vrCol.slice(3),
+      ],
+      footer: vr.scale === 'tabletop' ? 'GRIP: ROTATE · BOTH GRIPS: SCALE · TRIGGER: PRESS' : 'STICK ↑ TELEPORT · ← → TURN 30° · TRIGGER: PRESS',
+      note: this.note,
     };
   }
 
@@ -712,7 +789,7 @@ export class VRSession {
     this.world.visible = true;
 
     this.mode = 'tabletop';
-    this.denom = DEFAULT_DENOM;
+    this.denom = this.cfg.defaultDenom;
     this.yaw = 0;
     this.note = '';
     this.rebuild();
@@ -749,6 +826,26 @@ export class VRSession {
     this.hooks.onPresentChange(false);
   }
 
+  /** Meshes the intro reveals: by height (tower, fins) and along the span (bridges). */
+  introLayers() {
+    return {
+      tower: [this.meshes.shell, this.meshes.bands],
+      fins: [this.meshes.fins, this.meshes.finGlow],
+      bridges: [this.meshes.bridgeBody, this.meshes.rails, this.meshes.railGlow],
+    };
+  }
+
+  updateContent(dt) {
+    this.mats.pulse.offset.x -= dt * 0.22; // light travelling along every bridge
+  }
+
+  updateBoards(here) {
+    const s = this.state;
+    this.planBoard.update(this.model, s.planLevel, s.sectionAxis, s.sectionPos, this.planFocus, here);
+    this.sectionBoard.update(this.model, s.planLevel, s.sectionAxis, s.sectionPos);
+    this.dataBoard.update(this.model, s.planLevel);
+  }
+
   /** One XR frame: update everything, return the camera to render with. */
   frame(dt) {
     // Pull this frame's head pose into the camera before anything reads it.
@@ -759,21 +856,12 @@ export class VRSession {
 
     this.interaction.update(dt);
     this.updateClipPlane();
-    this.intro.update(
-      dt,
-      {
-        tower: [this.meshes.shell, this.meshes.bands],
-        fins: [this.meshes.fins, this.meshes.finGlow],
-        bridges: [this.meshes.bridgeBody, this.meshes.rails, this.meshes.railGlow],
-      },
-      this.maxZ,
-      this.env
-    );
+    this.intro.update(dt, this.introLayers(), this.maxZ, this.env);
 
     const eye = this.camera.getWorldPosition(new THREE.Vector3());
     const eyeQ = this.camera.getWorldQuaternion(new THREE.Quaternion());
     this.env.update(dt, eye);
-    this.mats.pulse.offset.x -= dt * 0.22; // light travelling along every bridge
+    this.updateContent(dt);
 
     this.updateFade(dt);
     // Vignette tightens with smooth-locomotion speed (eased so it never pops).
@@ -793,15 +881,12 @@ export class VRSession {
         this.panel.setVisible(true);
         this.ui.visible = true;
       }
-      this.panel.setState(this.panelState());
+      this.panel.setState(this.describePanel());
       this.panel.place(this.rig, eye, eyeQ, anchor);
       this.panel.update();
-      const s = this.state;
       const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(eyeQ);
       const here = this.mode === 'human' ? { x: eye.x, y: -eye.z, heading: Math.atan2(fwd.x, -fwd.z) } : null;
-      this.planBoard.update(this.model, s.planLevel, s.sectionAxis, s.sectionPos, this.planFocus, here);
-      this.sectionBoard.update(this.model, s.planLevel, s.sectionAxis, s.sectionPos);
-      this.dataBoard.update(this.model, s.planLevel);
+      this.updateBoards(here);
     }
     return this.camera;
   }

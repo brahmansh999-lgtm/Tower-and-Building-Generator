@@ -7,7 +7,7 @@ import Controls from './ui/Controls.jsx';
 import VillaStudio from './VillaStudio.jsx';
 import Landing from './Landing.jsx';
 import Credit from './Credit.jsx';
-import { isVRSupported } from './vr/VRSession.js';
+import VREnterButton, { useVREntry } from './ui/VREnter.jsx';
 
 const INITIAL_FORM = { floors: 84, width: 36, sway: 14, twist: 120, towers: 2, bridges: 2, mode: 'adjacent' };
 const INITIAL_CUTS = { planLevel: 48, sectionPos: 0, axis: 'x', cut3D: false };
@@ -112,24 +112,7 @@ function TowerStudio({ active }) {
   const uiSectionPos = (uiLo + uiHi) / 2 + (cuts.sectionPos / 100) * ((uiHi - uiLo) / 2);
 
   // VR: the button only appears when the browser supports immersive-vr.
-  const vrRef = useRef(null);
-  const [vrSupported, setVRSupported] = useState(false);
-  const [inVR, setInVR] = useState(false);
-  const [vrError, setVRError] = useState('');
-  useEffect(() => {
-    let alive = true;
-    isVRSupported().then((ok) => alive && setVRSupported(ok));
-    return () => {
-      alive = false;
-    };
-  }, []);
-  const toggleVR = () => {
-    const vr = vrRef.current;
-    if (!vr) return;
-    setVRError('');
-    if (inVR) vr.exit();
-    else vr.enter().catch((e) => setVRError(String((e && e.message) || e).slice(0, 80)));
-  };
+  const vr = useVREntry();
 
   const st = model.stats;
   const modeName = { adjacent: 'PAIRS', all: 'ALL-TO-ALL', chain: 'CHAIN' }[model.params.mode];
@@ -150,16 +133,10 @@ function TowerStudio({ active }) {
           sectionMetres={uiSectionPos}
           onForm={onForm}
           onCuts={onCuts}
-          vrRef={vrRef}
-          onVRChange={setInVR}
+          vrRef={vr.vrRef}
+          onVRChange={vr.setInVR}
         />
-
-        {vrSupported && (
-          <button type="button" className={inVR ? 'vr-btn is-on' : 'vr-btn'} onClick={toggleVR}>
-            {inVR ? 'EXIT VR' : 'ENTER VR'}
-          </button>
-        )}
-        {vrError && <div className="vr-error">VR · {vrError}</div>}
+        <VREnterButton vr={vr} />
 
         <header className="readout">
           <div className="title">TWISTED TWIN TOWERS</div>

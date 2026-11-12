@@ -293,7 +293,8 @@ export class VRInteraction {
       const [a, b] = this.inputs.filter((s) => s.grabbing);
       const p0 = this.handPos(a);
       const p1 = this.handPos(b);
-      const scale = THREE.MathUtils.clamp((G.s0 * p0.distanceTo(p1)) / G.d0, MIN_SCALE, MAX_SCALE);
+      const [lo, hi] = this.hooks.scaleRange ? this.hooks.scaleRange() : [MIN_SCALE, MAX_SCALE];
+      const scale = THREE.MathUtils.clamp((G.s0 * p0.distanceTo(p1)) / G.d0, lo, hi);
       this.hooks.setScale(scale);
       const ang = Math.atan2(-(p1.z - p0.z), p1.x - p0.x);
       this.hooks.setYaw(G.yaw0 + wrap(ang - G.ang0));

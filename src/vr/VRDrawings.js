@@ -1,7 +1,8 @@
 /**
  * VRDrawings.js
  *
- * Drawing boards that float around the user in VR:
+ * Drawing boards that float around the user in VR (tower studio below; the
+ * villa studio has VillaPlanBoard, VillaSectionBoard and VillaDataBoard):
  *
  *   VRPlanBoard     the desktop PlanView (fit-out, rooms, cores, bridges, labels)
  *                   at the current plan level and frame (site or one tower),
@@ -25,6 +26,8 @@ import { flushSync } from 'react-dom';
 import * as THREE from 'three';
 import PlanView from '../views/PlanView.jsx';
 import SectionView from '../views/SectionView.jsx';
+import VillaPlanView from '../views/VillaPlanView.jsx';
+import VillaSectionView from '../views/VillaSectionView.jsx';
 import { FLOOR_HEIGHT, BRIDGE_STATION_STRIDE, floorFitout } from '../geometry/generateTower.js';
 
 const RASTER = 2; //     canvas px per SVG px
@@ -241,11 +244,7 @@ export class VRPlanBoard extends SvgBoard {
     }
   }
 
-  /**
-   * "You are here": same framing as PlanView — bounds of the site (or of the
-   * focused plate ± 6 m), 38 px margin, uniform scale s, y flipped:
-   *   X = w/2 + (x − mx)·s,   Y = h/2 − (y − my)·s
-   */
+  /** "You are here" with PlanView's framing: site bounds or the focused plate ± 6 m, 38 px margin. */
   overlay() {
     const here = this.here;
     const fi = this.frameInfo;
@@ -263,33 +262,41 @@ export class VRPlanBoard extends SvgBoard {
         b.maxY = Math.max(b.maxY, p[j + 1] + 6);
       }
     }
-    const w = this.svgW;
-    const h = this.svgH;
-    const margin = 38;
-    const s = Math.min((w - margin * 2) / Math.max(1, b.maxX - b.minX), (h - margin * 2) / Math.max(1, b.maxY - b.minY));
-    const mx = (b.minX + b.maxX) / 2;
-    const my = (b.minY + b.maxY) / 2;
-    let x = (w / 2 + (here.x - mx) * s) * RASTER;
-    let y = HEAD + (h / 2 - (here.y - my) * s) * RASTER;
-    const off = x < 0 || y < HEAD || x > w * RASTER || y > HEAD + h * RASTER;
-    x = Math.min(w * RASTER - 30, Math.max(30, x));
-    y = Math.min(HEAD + h * RASTER - 30, Math.max(HEAD + 30, y));
-    const ctx = this.ctx;
-    ctx.fillStyle = 'rgba(79,227,255,0.28)';
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.arc(x, y, 60, -Math.PI / 2 + here.heading - 0.5, -Math.PI / 2 + here.heading + 0.5);
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = COL.cyan;
-    ctx.beginPath();
-    ctx.arc(x, y, 11, 0, Math.PI * 2);
-    ctx.fill();
-    setFont(ctx, 20, 600);
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(off ? 'YOU (OFF PLAN)' : 'YOU', x + 18, y - 18);
+    drawHere(this, here, b, 38);
   }
+}
+
+/**
+ * Draw the "you are here" marker on a plan board using the plan component's own
+ * framing: bounds b, pixel margin m, uniform scale s, y flipped:
+ *   X = w/2 + (x - mx)*s,   Y = h/2 - (y - my)*s
+ */
+function drawHere(board, here, b, m) {
+  const w = board.svgW;
+  const h = board.svgH;
+  const s = Math.min((w - m * 2) / Math.max(1, b.maxX - b.minX), (h - m * 2) / Math.max(1, b.maxY - b.minY));
+  const mx = (b.minX + b.maxX) / 2;
+  const my = (b.minY + b.maxY) / 2;
+  let x = (w / 2 + (here.x - mx) * s) * RASTER;
+  let y = HEAD + (h / 2 - (here.y - my) * s) * RASTER;
+  const off = x < 0 || y < HEAD || x > w * RASTER || y > HEAD + h * RASTER;
+  x = Math.min(w * RASTER - 30, Math.max(30, x));
+  y = Math.min(HEAD + h * RASTER - 30, Math.max(HEAD + 30, y));
+  const ctx = board.ctx;
+  ctx.fillStyle = 'rgba(79,227,255,0.28)';
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.arc(x, y, 60, -Math.PI / 2 + here.heading - 0.5, -Math.PI / 2 + here.heading + 0.5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = COL.cyan;
+  ctx.beginPath();
+  ctx.arc(x, y, 11, 0, Math.PI * 2);
+  ctx.fill();
+  setFont(ctx, 20, 600);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(off ? 'YOU (OFF PLAN)' : 'YOU', x + 18, y - 18);
 }
 
 export class VRSectionBoard extends SvgBoard {
@@ -517,5 +524,184 @@ export class VRDataBoard extends Board {
     ctx.textAlign = 'left';
     ctx.fillStyle = COL.faint;
     ctx.fillText('CYAN = AT PLAN LEVEL · AMBER = BRIDGE', P, DH - 30);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Villa studio boards
+ * ------------------------------------------------------------------------- */
+
+const villaKey = (v) => `${v.option.id}|${Math.round(v.stats.gfa)}`;
+
+export class VillaPlanBoard extends SvgBoard {
+  constructor() {
+    super('vr-villa-plan-board', 640, 470, 0.9);
+    this.here = null;
+    this.hereKey = '';
+    this.frameInfo = null;
+  }
+
+  update(villa, level, frame, axis, pos, here) {
+    if (!this.mesh.visible || !villa) return;
+    this.frameInfo = { villa, frame };
+    this.request(
+      `${villaKey(villa)}|${level}|${frame}|${axis}|${pos.toFixed(2)}`,
+      (size) => createElement(VillaPlanView, { villa, level, frame, sectionAxis: axis, sectionPos: pos, size }),
+      [`PLAN · L${level} · ${frame === 'site' ? 'SITE' : 'HOUSE'}`, level === 0 ? 'GROUND FLOOR' : 'FIRST FLOOR']
+    );
+    const hk = here ? `${here.x.toFixed(1)},${here.y.toFixed(1)},${here.heading.toFixed(2)}` : '';
+    if (hk !== this.hereKey) {
+      this.hereKey = hk;
+      this.here = here;
+      this.compose();
+    }
+  }
+
+  /** "You are here" with VillaPlanView's framing (house or site bounds, 40 px margin). */
+  overlay() {
+    const here = this.here;
+    const fi = this.frameInfo;
+    if (!here || !fi) return;
+    const { villa, frame } = fi;
+    const { plot } = villa;
+    let b;
+    if (frame === 'site') {
+      b = { minX: -plot.w / 2 - 14, maxX: plot.w / 2 + 14, minY: -plot.d / 2 - 14, maxY: plot.d / 2 + 10 };
+    } else {
+      b = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
+      for (const p of [villa.levels[0].outline, villa.levels[1].outline, villa.pool, villa.canopy && villa.canopy.outline]) {
+        if (!p) continue;
+        for (let i = 0; i < p.length; i += 2) {
+          b.minX = Math.min(b.minX, p[i] - 3);
+          b.maxX = Math.max(b.maxX, p[i] + 3);
+          b.minY = Math.min(b.minY, p[i + 1] - 3);
+          b.maxY = Math.max(b.maxY, p[i + 1] + 3);
+        }
+      }
+    }
+    drawHere(this, here, b, 40);
+  }
+}
+
+export class VillaSectionBoard extends SvgBoard {
+  constructor() {
+    super('vr-villa-section-board', 640, 470, 0.9);
+  }
+
+  update(villa, level, axis, pos) {
+    if (!this.mesh.visible || !villa) return;
+    this.request(
+      `${villaKey(villa)}|${level}|${axis}|${pos.toFixed(2)}`,
+      (size) => createElement(VillaSectionView, { villa, level, sectionAxis: axis, sectionPos: pos, size }),
+      ['SECTION A–A′', `∥ ${axis.toUpperCase()} · ${axis === 'x' ? 'Y' : 'X'} ${pos >= 0 ? '+' : ''}${pos.toFixed(1)} M`]
+    );
+  }
+}
+
+export class VillaDataBoard extends Board {
+  constructor() {
+    super('vr-villa-data-board', DW, DH, 0.62);
+  }
+
+  update(villa) {
+    if (!this.mesh.visible || !villa) return;
+    const key = villaKey(villa);
+    if (key === this.lastKey) return;
+    this.lastKey = key;
+    this.draw(villa);
+    this.texture.needsUpdate = true;
+  }
+
+  draw(villa) {
+    const ctx = this.ctx;
+    const st = villa.stats;
+    const P = 32;
+    this.frame(`OPTION ${villa.option.id} · ${villa.option.name}`, st.withinSetbacks ? 'WITHIN SETBACKS' : 'BREACHES SETBACK');
+    let y = HEAD + 44;
+    setFont(ctx, 19);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = COL.dim;
+    ctx.fillText(villa.option.tagline.toUpperCase().slice(0, 70), P, y);
+    y += 50;
+
+    const micro = (label) => {
+      setFont(ctx, 20, 600);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = COL.dim;
+      ctx.fillText(label, P, y);
+      const tw = ctx.measureText(label).width;
+      ctx.strokeStyle = COL.rule;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(P + tw + 16, y);
+      ctx.lineTo(DW - P, y);
+      ctx.stroke();
+      y += 44;
+    };
+    micro('BRIEF · SAME PLOT · SAME GFA');
+    const cells = [
+      ['GFA', `${fmt(st.gfa)} M²`],
+      ['L0 / L1', `${fmt(st.levelAreas[0])} / ${fmt(st.levelAreas[1])}`],
+      ['FOOTPRINT', `${fmt(st.footprint)} M²`],
+      ['COVERAGE', `${(st.coverage * 100).toFixed(1)} %`],
+      ['PLOT', `${villa.plot.w} × ${villa.plot.d} M`],
+      ['PLOT AREA', `${fmt(st.plotArea)} M²`],
+      ['BEDROOMS', `${st.bedrooms}`],
+      ['BATHROOMS', `${st.bathrooms}`],
+      ['HEIGHT', `${st.height.toFixed(1)} M`],
+      ['POOL', `${fmt(st.poolArea)} M²`, COL.amber],
+      ['SETBACK', `${villa.plot.setback} M`],
+      ['LEVELS', `${villa.levels.length}`],
+    ];
+    const cw = (DW - P * 2) / 4;
+    cells.forEach(([label, value, color], i) => {
+      const x = P + (i % 4) * cw;
+      const yy = y + Math.floor(i / 4) * 76;
+      setFont(ctx, 16);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = COL.dim;
+      ctx.fillText(label, x, yy);
+      setFont(ctx, 25, 600);
+      ctx.fillStyle = color || COL.fg;
+      ctx.fillText(value, x, yy + 34);
+    });
+    y += Math.ceil(cells.length / 4) * 76 + 16;
+
+    // Room schedule, one column per level, largest rooms first.
+    micro('ROOM SCHEDULE');
+    const colW = (DW - P * 2 - 40) / 2;
+    const top = y;
+    villa.levels.forEach((L, li) => {
+      let yy = top;
+      const x0 = P + li * (colW + 40);
+      setFont(ctx, 18, 600);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = COL.cyan;
+      ctx.fillText(`L${li} · ${L.name}`, x0, yy);
+      ctx.textAlign = 'right';
+      ctx.fillText(`${fmt(L.area)} M²`, x0 + colW, yy);
+      yy += 40;
+      const rooms = [...L.rooms].sort((a, b) => b.area - a.area);
+      const fit = Math.floor((DH - yy - 60) / 32);
+      setFont(ctx, 19, 500);
+      rooms.slice(0, fit).forEach((r) => {
+        ctx.textAlign = 'left';
+        ctx.fillStyle = COL.fg;
+        ctx.fillText(r.name, x0, yy);
+        ctx.textAlign = 'right';
+        ctx.fillStyle = COL.dim;
+        ctx.fillText(`${r.area.toFixed(1)}`, x0 + colW, yy);
+        yy += 32;
+      });
+      if (rooms.length > fit) {
+        ctx.textAlign = 'left';
+        ctx.fillStyle = COL.faint;
+        ctx.fillText(`+ ${rooms.length - fit} MORE`, x0, yy);
+      }
+    });
+    setFont(ctx, 16);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = COL.faint;
+    ctx.fillText('AREAS IN M²', P, DH - 30);
   }
 }

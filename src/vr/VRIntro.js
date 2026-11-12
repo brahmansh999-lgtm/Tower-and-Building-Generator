@@ -40,7 +40,8 @@ export class VRIntro {
   }
 
   /**
-   * Advance and apply. `layers` = { tower: Mesh[], fins: Mesh[], bridges: Mesh[] },
+   * Advance and apply. `layers` = { tower: Mesh[], fins: Mesh[], bridges: Mesh[],
+   * onReveal?(0..1) },
    * `maxZ` = model height in metres, `env` has setReveal(0..1).
    */
   update(dt, layers, maxZ, env) {
@@ -60,6 +61,8 @@ export class VRIntro {
     layers.tower.forEach((m) => show(m, zTower));
     layers.fins.forEach((m) => show(m, zFins));
     layers.bridges.forEach((m) => show(m, sweep - 1e-6));
+    // Content without reveal tables (the villa) rises through a clipping plane instead.
+    if (layers.onReveal) layers.onReveal(phase(t, 0.8, 4.2));
     if (t >= INTRO_LENGTH) this.finish(layers, env);
   }
 
@@ -70,5 +73,6 @@ export class VRIntro {
     for (const m of [...layers.tower, ...layers.fins, ...layers.bridges]) {
       if (m) m.geometry.setDrawRange(0, Infinity);
     }
+    if (layers.onReveal) layers.onReveal(1);
   }
 }

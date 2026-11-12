@@ -1,28 +1,31 @@
 /**
  * VRPanel.js
  *
- * In-VR UI built from plain three.js: a canvas drawn with the same visual
- * language as the desktop panel (black translucent card, 1 px white rules,
- * monospace uppercase micro-labels, cyan for cuts, amber for bridges), shown on
- * a MeshBasicMaterial plane. The canvas is redrawn only when a value or the
+ * In-VR control panel built from plain three.js: a canvas drawn with the same
+ * visual language as the desktop panel (black translucent card, 1 px white
+ * rules, monospace uppercase micro-labels, cyan for cuts, amber accents), shown
+ * on a MeshBasicMaterial plane. The canvas is redrawn only when a value or the
  * hover state changes.
  *
- * VRPanel holds every desktop slider (FORM / CLUSTER / CUTS) plus the VR
- * options. It is either docked in a fixed spot beside the model (the default,
- * so all controls are always in view) or worn on the left wrist.
- * The plan / section / data boards live in VRDrawings.js.
+ * The card is landscape with three columns, so every control is visible at
+ * once (no scrolling): a title and readout strip across the top, then the
+ * studio's controls (supplied by the session as a layout description) and the
+ * VR options. Its size is S / M / L (0.5 / 0.65 / 0.8 m wide) and it is either
+ * docked beside the model or worn on the left wrist.
+ *
+ * Layout description (from the session's describePanel()):
+ *   { title, subtitle, readout: [[label, value, colour?]], columns: [[item]] }
+ * Items: micro · slider · seg · toggle · buttons · chips · grid
  *
  * Pointer input arrives from VRInteraction as panel UV coordinates.
  */
 
 import * as THREE from 'three';
-import { PARAM_RANGES, FLOOR_HEIGHT } from '../geometry/generateTower.js';
 
-const CW = 1024; //  canvas px
-const CH = 1900;
-export const PANEL_W = 0.26; // m
-export const PANEL_H = (PANEL_W * CH) / CW;
-const DOCK_SCALE = 1.75; // docked card is 0.455 m wide
+const CW = 2048; //  canvas px
+const CH = 1120;
+const ASPECT = CH / CW;
+export const PANEL_SIZES = { S: 0.5, M: 0.65, L: 0.8 }; // card width in metres
 const MIN_EYE_DIST = 0.6; // UI never closer than this to the eyes
 
 const COL = {
@@ -34,76 +37,67 @@ const COL = {
   cyan: '#4fe3ff',
   amber: '#ffb347',
 };
+export const PANEL_COLORS = COL;
 const FONT = "'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace";
 const PAD = 52;
-
-const signed = (v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)} M`;
-const fmt = (v) => Math.round(v).toLocaleString('en-US');
+const GAP = 64; //    between columns
+const TOP = 250; //   columns start below the title + readout strip
+const FOOT = 64;
+const HEIGHTS = { micro: 52, slider: 100, seg: 96, toggle: 64, buttons: 96, chips: 96 };
 
 function setFont(ctx, px, weight = 500) {
   ctx.font = `${weight} ${px}px ${FONT}`;
   if ('letterSpacing' in ctx) ctx.letterSpacing = `${Math.round(px * 0.18)}px`;
 }
 
-/** Widget list for the current state, laid out top to bottom. */
-function describe(s) {
-  const R = PARAM_RANGES;
-  const { form, cuts, vr } = s;
-  const level = Math.min(cuts.planLevel, s.maxLevel);
-  const items = [
-    { t: 'header', h: 120 },
-    { t: 'readout', h: 190 },
-    { t: 'micro', label: 'FORM', h: 52 },
-    { t: 'slider', group: 'form', key: 'floors', label: 'HEIGHT', ...R.floors, value: form.floors, text: `${form.floors} FL · ${(form.floors * FLOOR_HEIGHT).toFixed(1)} M` },
-    { t: 'slider', group: 'form', key: 'width', label: 'WIDTH', ...R.width, value: form.width, text: `${form.width} M` },
-    { t: 'slider', group: 'form', key: 'sway', label: 'SWAY', ...R.sway, value: form.sway, text: `${form.sway.toFixed(1)} M` },
-    { t: 'slider', group: 'form', key: 'twist', label: 'TWIST', ...R.twist, value: form.twist, text: `${form.twist}°` },
-    { t: 'micro', label: 'CLUSTER', h: 52 },
-    { t: 'slider', group: 'form', key: 'towers', label: 'TOWERS', ...R.towers, value: form.towers, text: `${form.towers}` },
-    { t: 'slider', group: 'form', key: 'bridges', label: 'BRIDGES', ...R.bridges, value: form.bridges, text: `${form.bridges} / LINK`, accent: COL.amber },
-    {
-      t: 'seg', group: 'form', key: 'mode', label: 'CONNECTION', value: form.mode,
-      options: [['adjacent', 'PAIRS'], ['all', 'ALL'], ['chain', 'CHAIN']],
-    },
-    { t: 'micro', label: 'CUTS', h: 52 },
-    { t: 'slider', group: 'cuts', key: 'planLevel', label: 'PLAN LEVEL', min: 0, max: s.maxLevel, step: 1, value: level, text: `L${level} · +${(level * FLOOR_HEIGHT).toFixed(1)} M`, accent: COL.cyan },
-    { t: 'slider', group: 'cuts', key: 'sectionPos', label: 'SECTION', min: -100, max: 100, step: 0.5, value: cuts.sectionPos, text: `${cuts.axis === 'x' ? 'Y' : 'X'} ${signed(s.sectionMetres)}`, accent: COL.cyan },
-    { t: 'seg', group: 'cuts', key: 'axis', label: 'SECTION AXIS', value: cuts.axis, options: [['x', '∥ X'], ['y', '∥ Y']] },
-    { t: 'toggle', group: 'cuts', key: 'cut3D', label: 'CUT 3D MODEL', value: cuts.cut3D },
-    { t: 'micro', label: 'VR', h: 52 },
+/**
+ * The VR options column shared by every studio.
+ * views: [[id, label]]; extra: items to put before SHOW (e.g. plan frame).
+ */
+export function vrColumn(vr, views, extra = []) {
+  return [
+    { t: 'micro', label: 'VR' },
     {
       t: 'seg', group: 'vr', key: 'scale', label: `SCALE · ${vr.scale === 'tabletop' ? `1:${Math.round(vr.denom)}` : '1:1'}`, value: vr.scale,
       options: [['tabletop', 'TABLETOP'], ['human', 'HUMAN 1:1']],
     },
-    {
-      t: 'buttons', group: 'vr', key: 'view', label: 'VIEWPOINTS',
-      options: [['street', 'STREET'], ['podium', 'PODIUM'], ['bridge', 'BRIDGE'], ['crown', 'CROWN'], ['drone', 'DRONE']],
-    },
-    {
-      t: 'seg', group: 'vr', key: 'planFocus', label: 'PLAN FRAME', value: vr.planFocus,
-      options: [['site', 'SITE'], ...vr.towerNames.map((n, i) => [i, n])],
-    },
+    // More than five viewpoints wrap onto a grid so the labels stay legible.
+    views.length > 5
+      ? { t: 'grid', group: 'vr', key: 'view', label: 'VIEWPOINTS', cols: 4, options: views }
+      : { t: 'buttons', group: 'vr', key: 'view', label: 'VIEWPOINTS', options: views },
+    ...extra,
     {
       t: 'chips', group: 'vr', label: 'SHOW',
-      options: [['boards', 'DRAWINGS', vr.boards], ['data', 'DATA', vr.data], ['city', 'CITY', vr.city], ['smooth', 'SMOOTH', vr.smooth]],
+      options: [['boards', 'DRAWINGS', vr.boards], ['data', 'DATA', vr.data], ['city', 'CONTEXT', vr.city], ['smooth', 'SMOOTH', vr.smooth]],
     },
     {
       t: 'seg', group: 'vr', key: 'docked', label: 'MENU', value: vr.docked,
       options: [[true, 'DOCKED'], [false, 'ON WRIST']],
     },
+    { t: 'seg', group: 'vr', key: 'panelSize', label: 'MENU SIZE', value: vr.panelSize, options: [['S', 'S'], ['M', 'M'], ['L', 'L']] },
     {
       t: 'seg', group: 'vr', key: 'quality', label: `QUALITY · ${vr.device} · ${vr.activeScale.toFixed(1)}×`, value: vr.quality,
       options: [['auto', 'AUTO'], ['1.0', '1.0×'], ['1.2', '1.2×']],
     },
-    { t: 'footer', h: 70 },
   ];
-  const H = { slider: 100, seg: 96, toggle: 64, buttons: 96, chips: 96 };
-  let y = 0;
-  for (const it of items) {
-    it.y = y;
-    it.h = it.h ?? H[it.t];
-    y += it.h;
-  }
+}
+
+/** Give every item its rectangle: three columns under the top strip. */
+function layout(desc) {
+  const colW = (CW - PAD * 2 - GAP * 2) / 3;
+  const items = [];
+  desc.columns.forEach((col, c) => {
+    let y = TOP;
+    const x = PAD + c * (colW + GAP);
+    for (const it of col) {
+      it.x = x;
+      it.w = colW;
+      it.y = y;
+      it.h = it.t === 'grid' ? 56 + Math.ceil(it.options.length / it.cols) * 84 : HEIGHTS[it.t];
+      y += it.h;
+      items.push(it);
+    }
+  });
   return items;
 }
 
@@ -130,24 +124,20 @@ export class VRPanel {
       toneMapped: false,
       fog: false,
     });
-    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(PANEL_W, PANEL_H), this.material);
+    // Unit-wide plane; the card size is applied as a uniform scale.
+    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, ASPECT), this.material);
     this.mesh.name = 'vr-panel';
     this.mesh.renderOrder = 10;
     this.mesh.visible = false;
-    this.state = null;
+    this.desc = null;
     this.items = [];
     this.hover = '';
     this.drag = null;
     this.lastKey = '';
     this.anchored = false; // fallback placement when no left controller is tracked
     this.docked = true;
-  }
-
-  /** Docked: a larger card placed by the session. Wrist: life size on the left hand. */
-  setDocked(v) {
-    this.docked = v;
-    this.anchored = false;
-    this.mesh.scale.setScalar(v ? DOCK_SCALE : 1);
+    this.size = 'M';
+    this.setSize('M');
   }
 
   get visible() {
@@ -166,33 +156,52 @@ export class VRPanel {
     this.setVisible(!this.mesh.visible);
   }
 
-  setState(s) {
-    this.state = s;
+  setDocked(v) {
+    this.docked = v;
+    this.anchored = false;
+  }
+
+  setSize(s) {
+    this.size = PANEL_SIZES[s] ? s : 'M';
+    this.mesh.scale.setScalar(PANEL_SIZES[this.size]);
+    this.anchored = false;
+  }
+
+  /** Card width and height in metres. */
+  get widthM() {
+    return PANEL_SIZES[this.size];
+  }
+
+  get heightM() {
+    return PANEL_SIZES[this.size] * ASPECT;
+  }
+
+  /** Layout description from the session (see the header comment). */
+  setState(desc) {
+    this.desc = desc;
   }
 
   /* ---------------- placement ---------------- */
 
   /**
-   * Wrist placement: 18 cm above and 6 cm ahead of the left grip, turned to face
-   * the eyes. If that point is closer than 0.6 m to the eyes, it is pushed out
-   * along the eye→panel ray to exactly 0.6 m (the comfort minimum). Without a
-   * tracked left grip, the panel is parked 0.75 m ahead of the head once and
-   * stays put in the rig until reopened.
+   * Wrist placement: the card's lower edge sits 6 cm above the left grip and
+   * 6 cm further from the eyes, turned to face them. If that is closer than
+   * 0.6 m to the eyes it is pushed out along the eye→card ray to exactly 0.6 m.
+   * Without a tracked left grip the card is parked 0.8 m ahead once and stays
+   * in the rig until reopened. Docked cards are positioned by the session.
    */
   place(rig, eye, eyeQuat, leftGrip) {
     if (!this.mesh.visible || this.docked) return;
     const p = new THREE.Vector3();
     if (leftGrip && leftGrip.visible) {
-      // Offset in world terms (up, and away from the eyes horizontally) so a
-      // rolled wrist doesn't tip the panel over.
       leftGrip.updateWorldMatrix(true, false);
       const g = new THREE.Vector3().setFromMatrixPosition(leftGrip.matrixWorld);
       const away = new THREE.Vector3().subVectors(g, eye).setY(0).normalize();
-      p.copy(g).add(new THREE.Vector3(0, 0.18, 0)).addScaledVector(away, 0.06);
+      p.copy(g).add(new THREE.Vector3(0, 0.06 + this.heightM / 2, 0)).addScaledVector(away, 0.06);
       this.anchored = false;
     } else if (!this.anchored) {
       const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(eyeQuat).setY(0).normalize();
-      p.copy(eye).addScaledVector(fwd, 0.75).add(new THREE.Vector3(0, -0.12, 0));
+      p.copy(eye).addScaledVector(fwd, 0.8).add(new THREE.Vector3(0, -0.12, 0));
       this.anchored = true;
     } else {
       this.mesh.getWorldPosition(p);
@@ -208,8 +217,8 @@ export class VRPanel {
 
   /**
    * Ray → panel UV. Intersect the panel's infinite plane, then express the hit
-   * in panel-local coordinates: u = x/W + ½, v = y/H + ½. Returns
-   * { u, v, inside, distance } or null when the ray faces away.
+   * in panel-local coordinates (the unscaled unit plane): u = x + ½, v = y/A + ½
+   * with A = height/width. Returns { u, v, inside, distance, point } or null.
    */
   hitTest(ray) {
     if (!this.mesh.visible) return null;
@@ -220,8 +229,8 @@ export class VRPanel {
     const hit = new THREE.Vector3();
     if (!ray.intersectPlane(plane, hit)) return null;
     const local = this.mesh.worldToLocal(hit.clone());
-    const u = local.x / PANEL_W + 0.5;
-    const v = local.y / PANEL_H + 0.5;
+    const u = local.x + 0.5;
+    const v = local.y / ASPECT + 0.5;
     return { u, v, inside: u >= 0 && u <= 1 && v >= 0 && v <= 1, distance: ray.origin.distanceTo(hit), point: hit };
   }
 
@@ -230,17 +239,14 @@ export class VRPanel {
     const x = u * CW;
     const y = (1 - v) * CH;
     for (const it of this.items) {
-      if (y < it.y || y >= it.y + it.h) continue;
-      if (it.t === 'slider') return { id: `${it.key}`, item: it };
-      if (it.t === 'toggle') return { id: it.key, item: it };
-      if (it.t === 'seg' || it.t === 'buttons' || it.t === 'chips') {
-        const r = it.row;
-        if (!r || y < r.y || y > r.y + r.h) return null;
-        const i = Math.floor(((x - r.x) / r.w) * it.options.length);
-        if (i < 0 || i >= it.options.length) return null;
-        return { id: `${it.key ?? it.label}:${i}`, item: it, option: it.options[i] };
-      }
-      return null;
+      if (x < it.x || x > it.x + it.w || y < it.y || y >= it.y + it.h) continue;
+      if (it.t === 'slider' || it.t === 'toggle') return { id: it.key, item: it };
+      const r = it.row;
+      if (!r || x < r.x || x > r.x + r.w || y < r.y || y > r.y + r.h) return null;
+      const cols = it.t === 'grid' ? it.cols : it.options.length;
+      const i = Math.floor(((x - r.x) / r.w) * cols) + (it.t === 'grid' ? Math.floor((y - r.y) / it.cellH) * cols : 0);
+      if (i < 0 || i >= it.options.length) return null;
+      return { id: `${it.key ?? it.label}:${i}`, item: it, option: it.options[i] };
     }
     return null;
   }
@@ -261,11 +267,11 @@ export class VRPanel {
     } else if (it.t === 'toggle') {
       this.hooks.onChange(it.group, it.key, !it.value);
       this.hooks.onHaptic();
-    } else if (it.t === 'seg' || it.t === 'buttons') {
-      this.hooks.onChange(it.group, it.key, w.option[0]);
-      this.hooks.onHaptic();
     } else if (it.t === 'chips') {
       this.hooks.onChange(it.group, w.option[0], !w.option[2]);
+      this.hooks.onHaptic();
+    } else {
+      this.hooks.onChange(it.group, it.key, w.option[0]);
       this.hooks.onHaptic();
     }
     return true;
@@ -301,22 +307,21 @@ export class VRPanel {
 
   /** Redraw only if something visible changed. */
   update() {
-    if (!this.mesh.visible || !this.state) return;
-    const s = this.state;
-    const key = JSON.stringify([s.form, s.cuts, s.vr, s.maxLevel, s.sectionMetres.toFixed(1), s.stats, this.hover]);
+    if (!this.mesh.visible || !this.desc) return;
+    const key = JSON.stringify([this.desc, this.hover]);
     if (key === this.lastKey) return;
     this.lastKey = key;
     // Keep the live drag item so its value stays in sync while held.
     const dragKey = this.drag && this.drag.key;
-    this.items = describe(s);
-    if (dragKey) this.drag = this.items.find((it) => it.key === dragKey) || null;
+    this.items = layout(this.desc);
+    if (dragKey) this.drag = this.items.find((it) => it.t === 'slider' && it.key === dragKey) || null;
     this.draw();
     this.texture.needsUpdate = true;
   }
 
   draw() {
     const ctx = this.ctx;
-    const s = this.state;
+    const d = this.desc;
     ctx.clearRect(0, 0, CW, CH);
     ctx.fillStyle = COL.bg;
     ctx.fillRect(0, 0, CW, CH);
@@ -324,163 +329,167 @@ export class VRPanel {
     ctx.lineWidth = 3;
     ctx.strokeRect(1.5, 1.5, CW - 3, CH - 3);
     ctx.textBaseline = 'middle';
-    const inner = CW - PAD * 2;
 
-    for (const it of this.items) {
-      const y = it.y;
-      switch (it.t) {
-        case 'header': {
-          setFont(ctx, 34, 700);
-          ctx.fillStyle = COL.fg;
-          ctx.textAlign = 'left';
-          ctx.fillText('TWISTED TWIN TOWERS', PAD, y + 54);
-          setFont(ctx, 19);
-          ctx.fillStyle = COL.dim;
-          ctx.fillText(`VR · ${s.vr.docked ? 'DOCKED' : 'WRIST'} MENU · X TO HIDE`, PAD, y + 92);
-          break;
-        }
-        case 'readout': {
-          const st = s.stats;
-          const cells = [
-            ['FLOORS', `${st.totalFloors}`],
-            ['HEIGHT', `${st.height.toFixed(1)} M`],
-            ['GFA', `${fmt(st.gfa)} M²`],
-            ['TOWERS', `${st.towers}`],
-            ['BRIDGES', `${st.bridges}`, COL.amber],
-            ['SWAY', `${st.sway.toFixed(1)} M`],
-            ['TWIST', `${st.twist}°`],
-            ['SCALE', s.vr.scale === 'tabletop' ? `1:${Math.round(s.vr.denom)}` : '1:1'],
-          ];
-          const cw = inner / 4;
-          cells.forEach(([label, value, color], i) => {
-            const cx = PAD + (i % 4) * cw;
-            const cy = y + 20 + Math.floor(i / 4) * 84;
-            setFont(ctx, 17);
-            ctx.fillStyle = COL.dim;
-            ctx.textAlign = 'left';
-            ctx.fillText(label, cx, cy + 14);
-            setFont(ctx, 27, 600);
-            ctx.fillStyle = color || COL.fg;
-            ctx.fillText(value, cx, cy + 50);
-          });
-          break;
-        }
-        case 'micro': {
-          setFont(ctx, 19, 600);
-          ctx.fillStyle = COL.dim;
-          ctx.textAlign = 'left';
-          ctx.fillText(it.label, PAD, y + 28);
-          const tw = ctx.measureText(it.label).width;
-          ctx.strokeStyle = COL.rule;
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.moveTo(PAD + tw + 18, y + 28);
-          ctx.lineTo(CW - PAD, y + 28);
-          ctx.stroke();
-          break;
-        }
-        case 'slider': {
-          const hot = this.hover === it.key || (this.drag && this.drag.key === it.key);
-          setFont(ctx, 22, 500);
-          ctx.textAlign = 'left';
-          ctx.fillStyle = hot ? COL.fg : COL.dim;
-          ctx.fillText(it.label, PAD, y + 26);
-          ctx.textAlign = 'right';
-          ctx.fillStyle = it.accent || COL.fg;
-          ctx.fillText(it.text, CW - PAD, y + 26);
-          const tr = { x: PAD + 14, y: y + 68, w: inner - 28 };
-          it.track = tr;
-          const frac = (it.value - it.min) / (it.max - it.min || 1);
-          ctx.strokeStyle = COL.rule;
-          ctx.lineWidth = 3;
-          ctx.beginPath();
-          ctx.moveTo(tr.x, tr.y);
-          ctx.lineTo(tr.x + tr.w, tr.y);
-          ctx.stroke();
-          ctx.strokeStyle = it.accent || COL.fg;
-          ctx.globalAlpha = 0.7;
-          ctx.beginPath();
-          ctx.moveTo(tr.x, tr.y);
-          ctx.lineTo(tr.x + tr.w * frac, tr.y);
-          ctx.stroke();
-          ctx.globalAlpha = 1;
-          const tx = tr.x + tr.w * frac;
-          const ts = hot ? 30 : 24;
-          ctx.fillStyle = COL.fg;
-          ctx.fillRect(tx - ts / 2, tr.y - ts / 2, ts, ts);
-          break;
-        }
-        case 'seg':
-        case 'buttons':
-        case 'chips': {
-          setFont(ctx, 20, 500);
-          ctx.textAlign = 'left';
-          ctx.fillStyle = COL.dim;
-          ctx.fillText(it.label, PAD, y + 22);
-          const r = { x: PAD, y: y + 42, w: inner, h: 46 };
-          it.row = r;
-          const n = it.options.length;
-          const bw = r.w / n;
-          ctx.strokeStyle = COL.rule;
-          ctx.lineWidth = 2;
-          ctx.strokeRect(r.x, r.y, r.w, r.h);
-          it.options.forEach((o, i) => {
-            const bx = r.x + i * bw;
-            const id = `${it.key ?? it.label}:${i}`;
-            const on = it.t === 'seg' ? o[0] === it.value : it.t === 'chips' ? o[2] : false;
-            if (on) {
-              ctx.fillStyle = COL.fg;
-              ctx.fillRect(bx, r.y, bw, r.h);
-            } else if (this.hover === id) {
-              ctx.fillStyle = 'rgba(255,255,255,0.12)';
-              ctx.fillRect(bx, r.y, bw, r.h);
-            }
-            if (i > 0) {
-              ctx.beginPath();
-              ctx.moveTo(bx, r.y);
-              ctx.lineTo(bx, r.y + r.h);
-              ctx.stroke();
-            }
-            setFont(ctx, n > 3 ? 17 : 19, 600);
-            ctx.textAlign = 'center';
-            ctx.fillStyle = on ? '#000' : this.hover === id ? COL.fg : COL.dim;
-            ctx.fillText(o[1], bx + bw / 2, r.y + r.h / 2 + 1);
-          });
-          break;
-        }
-        case 'toggle': {
-          const hot = this.hover === it.key;
-          ctx.strokeStyle = it.value ? COL.cyan : COL.faint;
-          ctx.lineWidth = 3;
-          ctx.strokeRect(PAD, y + 18, 26, 26);
-          if (it.value) {
-            ctx.fillStyle = COL.cyan;
-            ctx.fillRect(PAD + 6, y + 24, 14, 14);
-          }
-          setFont(ctx, 22, 500);
-          ctx.textAlign = 'left';
-          ctx.fillStyle = hot ? COL.fg : COL.dim;
-          ctx.fillText(it.label, PAD + 46, y + 32);
-          ctx.textAlign = 'right';
-          ctx.fillStyle = it.value ? COL.cyan : COL.dim;
-          ctx.fillText(it.value ? 'ON' : 'OFF', CW - PAD, y + 32);
-          break;
-        }
-        case 'footer': {
-          setFont(ctx, 16);
-          ctx.textAlign = 'left';
-          ctx.fillStyle = COL.faint;
-          const tip = s.vr.scale === 'tabletop' ? 'GRIP ROTATE · BOTH GRIPS SCALE 1:1000–1:200' : 'STICK ↑ TELEPORT · ← → TURN 30°';
-          ctx.fillText(tip, PAD, y + 26);
-          if (s.vr.note) {
-            ctx.fillStyle = COL.amber;
-            ctx.fillText(s.vr.note, PAD, y + 52);
-          }
-          break;
-        }
-        default:
-          break;
+    // Title strip
+    setFont(ctx, 36, 700);
+    ctx.fillStyle = COL.fg;
+    ctx.textAlign = 'left';
+    ctx.fillText(d.title, PAD, 56);
+    setFont(ctx, 19);
+    ctx.fillStyle = COL.dim;
+    ctx.fillText(d.subtitle, PAD, 98);
+    setFont(ctx, 18);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = COL.faint;
+    ctx.fillText(`${this.docked ? 'DOCKED' : 'WRIST'} · X TO HIDE`, CW - PAD, 56);
+
+    // Readout strip: one row of cells
+    const n = d.readout.length;
+    const cw = (CW - PAD * 2) / n;
+    d.readout.forEach(([label, value, color], i) => {
+      const x = PAD + i * cw;
+      setFont(ctx, 17);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = COL.dim;
+      ctx.fillText(label, x, 148);
+      setFont(ctx, 27, 600);
+      ctx.fillStyle = color || COL.fg;
+      ctx.fillText(value, x, 188);
+    });
+    ctx.strokeStyle = COL.rule;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(PAD, 222);
+    ctx.lineTo(CW - PAD, 222);
+    ctx.stroke();
+
+    for (const it of this.items) this.drawItem(it);
+
+    // Footer
+    setFont(ctx, 16);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = COL.faint;
+    ctx.fillText(d.footer || '', PAD, CH - FOOT / 2);
+    if (d.note) {
+      ctx.textAlign = 'right';
+      ctx.fillStyle = COL.amber;
+      ctx.fillText(d.note, CW - PAD, CH - FOOT / 2);
+    }
+  }
+
+  drawItem(it) {
+    const ctx = this.ctx;
+    const { x, y, w } = it;
+    switch (it.t) {
+      case 'micro': {
+        setFont(ctx, 19, 600);
+        ctx.fillStyle = COL.dim;
+        ctx.textAlign = 'left';
+        ctx.fillText(it.label, x, y + 28);
+        const tw = ctx.measureText(it.label).width;
+        ctx.strokeStyle = COL.rule;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x + tw + 18, y + 28);
+        ctx.lineTo(x + w, y + 28);
+        ctx.stroke();
+        break;
       }
+      case 'slider': {
+        const hot = this.hover === it.key || (this.drag && this.drag.key === it.key);
+        setFont(ctx, 22, 500);
+        ctx.textAlign = 'left';
+        ctx.fillStyle = hot ? COL.fg : COL.dim;
+        ctx.fillText(it.label, x, y + 26);
+        ctx.textAlign = 'right';
+        ctx.fillStyle = it.accent || COL.fg;
+        ctx.fillText(it.text, x + w, y + 26);
+        const tr = { x: x + 14, y: y + 68, w: w - 28 };
+        it.track = tr;
+        const frac = (it.value - it.min) / (it.max - it.min || 1);
+        ctx.strokeStyle = COL.rule;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(tr.x, tr.y);
+        ctx.lineTo(tr.x + tr.w, tr.y);
+        ctx.stroke();
+        ctx.strokeStyle = it.accent || COL.fg;
+        ctx.globalAlpha = 0.7;
+        ctx.beginPath();
+        ctx.moveTo(tr.x, tr.y);
+        ctx.lineTo(tr.x + tr.w * frac, tr.y);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+        const tx = tr.x + tr.w * frac;
+        const ts = hot ? 30 : 24;
+        ctx.fillStyle = COL.fg;
+        ctx.fillRect(tx - ts / 2, tr.y - ts / 2, ts, ts);
+        break;
+      }
+      case 'seg':
+      case 'buttons':
+      case 'chips':
+      case 'grid': {
+        setFont(ctx, 20, 500);
+        ctx.textAlign = 'left';
+        ctx.fillStyle = COL.dim;
+        ctx.fillText(it.label, x, y + 22);
+        const cols = it.t === 'grid' ? it.cols : it.options.length;
+        const rows = Math.ceil(it.options.length / cols);
+        it.cellH = it.t === 'grid' ? 84 : 46;
+        const r = { x, y: y + 42, w, h: rows * it.cellH };
+        it.row = r;
+        const bw = w / cols;
+        ctx.strokeStyle = COL.rule;
+        ctx.lineWidth = 2;
+        it.options.forEach((o, i) => {
+          const bx = r.x + (i % cols) * bw;
+          const by = r.y + Math.floor(i / cols) * it.cellH;
+          const id = `${it.key ?? it.label}:${i}`;
+          const on = it.t === 'chips' ? o[2] : it.t === 'buttons' ? false : o[0] === it.value;
+          ctx.strokeRect(bx, by, bw, it.cellH);
+          if (on) {
+            ctx.fillStyle = COL.fg;
+            ctx.fillRect(bx, by, bw, it.cellH);
+          } else if (this.hover === id) {
+            ctx.fillStyle = 'rgba(255,255,255,0.12)';
+            ctx.fillRect(bx, by, bw, it.cellH);
+          }
+          ctx.textAlign = 'center';
+          ctx.fillStyle = on ? '#000' : this.hover === id ? COL.fg : COL.dim;
+          if (it.t === 'grid' && o[2]) {
+            // two-line cell: number on top, name below
+            setFont(ctx, 26, 700);
+            ctx.fillText(o[1], bx + bw / 2, by + 28);
+            setFont(ctx, 15, 600);
+            ctx.fillText(o[2], bx + bw / 2, by + 60);
+          } else {
+            setFont(ctx, cols > 4 ? 16 : cols > 3 ? 17 : 19, 600);
+            ctx.fillText(o[1], bx + bw / 2, by + it.cellH / 2 + 1);
+          }
+        });
+        break;
+      }
+      case 'toggle': {
+        const hot = this.hover === it.key;
+        ctx.strokeStyle = it.value ? COL.cyan : COL.faint;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(x, y + 18, 26, 26);
+        if (it.value) {
+          ctx.fillStyle = COL.cyan;
+          ctx.fillRect(x + 6, y + 24, 14, 14);
+        }
+        setFont(ctx, 22, 500);
+        ctx.textAlign = 'left';
+        ctx.fillStyle = hot ? COL.fg : COL.dim;
+        ctx.fillText(it.label, x + 46, y + 32);
+        ctx.textAlign = 'right';
+        ctx.fillStyle = it.value ? COL.cyan : COL.dim;
+        ctx.fillText(it.value ? 'ON' : 'OFF', x + w, y + 32);
+        break;
+      }
+      default:
+        break;
     }
   }
 

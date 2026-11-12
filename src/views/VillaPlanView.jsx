@@ -27,9 +27,11 @@ function perimeterTicks(p, step) {
   return out;
 }
 
-export default function VillaPlanView({ villa, level, frame, sectionAxis, sectionPos }) {
+export default function VillaPlanView({ villa, level, frame, sectionAxis, sectionPos, size }) {
   const hostRef = useRef(null);
-  const { w, h } = useElementSize(hostRef);
+  const measured = useElementSize(hostRef);
+  // `size` renders at a fixed size off-screen (the VR drawing boards).
+  const { w, h } = size || measured;
 
   const drawing = useMemo(() => {
     if (w < 40 || h < 40) return null;
