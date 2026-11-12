@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { FLOOR_HEIGHT, BRIDGE_STATION_STRIDE, CORE_OVERRUN, PARAPET } from '../geometry/generateTower.js';
+import { VRSession } from '../vr/VRSession.js';
 
 const CYAN = 0x4fe3ff;
 const BRIDGE_RING = 40; // vertices around each bridge section
@@ -869,14 +870,36 @@ function updateCuts(ctx, model, planLevel, axis, pos, cut3D) {
     ctx.clipPlane.normal.set(1, 0, 0);
     ctx.clipPlane.constant = -pos;
   }
-  ctx.renderer.clippingPlanes = cut3D ? [ctx.clipPlane] : [];
+  const planes = cut3D ? [ctx.clipPlane] : [];
+  // In VR the session clips per material; park the desktop planes until it ends.
+  if (ctx.vr && ctx.vr.presenting && ctx.vr.saved) ctx.vr.saved.clipping = planes;
+  else ctx.renderer.clippingPlanes = planes;
 }
 
-export default function Viewport3D({ model, planLevel, sectionAxis, sectionPos, cut3D, active = true }) {
+export default function Viewport3D({
+  model,
+  planLevel,
+  sectionAxis,
+  sectionPos,
+  cut3D,
+  active = true,
+  // VR: raw (un-coalesced) values for the wrist panel, setters, and a handle
+  form,
+  cuts,
+  maxLevel,
+  sectionMetres,
+  onForm,
+  onCuts,
+  vrRef,
+  onVRChange,
+}) {
   const mountRef = useRef(null);
   const ctxRef = useRef(null);
   const activeRef = useRef(active);
   activeRef.current = active;
+  // Latest callbacks for the VR session, which outlives individual renders.
+  const hooksRef = useRef({});
+  hooksRef.current = { onForm, onCuts, onVRChange };
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -885,6 +908,7 @@ export default function Viewport3D({ model, planLevel, sectionAxis, sectionPos, 
     // Phones: cap pixel ratio to keep fill-rate (and battery) in check.
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, coarse ? 1.5 : 2));
     renderer.setClearColor(0x000000, 1);
+    renderer.xr.enabled = true;
     mount.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
@@ -945,6 +969,7 @@ export default function Viewport3D({ model, planLevel, sectionAxis, sectionPos, 
       mats,
       towerGroup,
       towerObjs: [],
+      root,
       contextGroup,
       lastContext: null,
       bridgeMesh,
@@ -957,7 +982,22 @@ export default function Viewport3D({ model, planLevel, sectionAxis, sectionPos, 
     };
     ctxRef.current = ctx;
 
+    // VR shares this renderer and scene; its world is built on first entry.
+    const vr = new VRSession({
+      renderer,
+      scene,
+      desktopRoot: root,
+      hooks: {
+        onForm: (k, v) => hooksRef.current.onForm && hooksRef.current.onForm(k, v),
+        onCuts: (k, v) => hooksRef.current.onCuts && hooksRef.current.onCuts(k, v),
+        onPresentChange: (on) => hooksRef.current.onVRChange && hooksRef.current.onVRChange(on),
+      },
+    });
+    ctx.vr = vr;
+    if (vrRef) vrRef.current = { enter: () => vr.enter(), exit: () => vr.exit() };
+
     const resize = () => {
+      if (renderer.xr.isPresenting) return; // the XR device owns the size while presenting
       const w = mount.clientWidth;
       const h = mount.clientHeight;
       if (!w || !h) return;
@@ -969,9 +1009,17 @@ export default function Viewport3D({ model, planLevel, sectionAxis, sectionPos, 
     ro.observe(mount);
     resize();
 
-    let raf = 0;
-    const tick = () => {
-      raf = requestAnimationFrame(tick);
+    // setAnimationLoop instead of requestAnimationFrame: it is driven by the
+    // XR device while a session is presenting (window rAF stops on Quest).
+    let last = performance.now();
+    const tick = (time) => {
+      const now = time || performance.now();
+      const dt = Math.min(0.1, (now - last) / 1000);
+      last = now;
+      if (renderer.xr.isPresenting) {
+        renderer.render(scene, vr.frame(dt));
+        return;
+      }
       if (!activeRef.current) return;
       controls.update();
       // Fog tracks the orbit distance so depth fades the same at any zoom.
@@ -980,10 +1028,12 @@ export default function Viewport3D({ model, planLevel, sectionAxis, sectionPos, 
       scene.fog.far = d + ctx.sceneR * 2.4;
       renderer.render(scene, camera);
     };
-    tick();
+    renderer.setAnimationLoop(tick);
 
     return () => {
-      cancelAnimationFrame(raf);
+      renderer.setAnimationLoop(null);
+      vr.dispose();
+      if (vrRef) vrRef.current = null;
       clearTimeout(resumeTimer);
       ro.disconnect();
       controls.removeEventListener('start', onStart);
@@ -1010,6 +1060,14 @@ export default function Viewport3D({ model, planLevel, sectionAxis, sectionPos, 
     const ctx = ctxRef.current;
     if (ctx) updateCuts(ctx, model, planLevel, sectionAxis, sectionPos, cut3D);
   }, [model, planLevel, sectionAxis, sectionPos, cut3D]);
+
+  // Mirror state into the VR session (cheap: it only flags what to rebuild).
+  useEffect(() => {
+    const ctx = ctxRef.current;
+    if (ctx && form && cuts) {
+      ctx.vr.setState({ model, form, cuts, planLevel, sectionAxis, sectionPos, cut3D, maxLevel, sectionMetres });
+    }
+  }, [model, form, cuts, planLevel, sectionAxis, sectionPos, cut3D, maxLevel, sectionMetres]);
 
   return <div className="viewport" ref={mountRef} />;
 }

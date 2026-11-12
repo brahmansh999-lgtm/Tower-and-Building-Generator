@@ -15,7 +15,7 @@ npm install
 npm run dev
 ```
 
-Then open the local URL Vite prints (default http://localhost:5173).
+Then open the local URL Vite prints (default https://localhost:5173). The dev server uses a self-signed certificate (WebXR needs HTTPS), so accept the browser warning once.
 
 ## Controls
 
@@ -31,5 +31,27 @@ Then open the local URL Vite prints (default http://localhost:5173).
 - `src/ui/Controls.jsx` — parameter panel
 - `src/geometry/generateVilla.js` — villa options, room partitioning, fit-out and suburban context
 - `src/VillaStudio.jsx`, `src/views/Villa*.jsx`, `src/ui/VillaControls.jsx` — villa tab
+- `src/geometry/buildVRMeshes.js` — VR geometry (ribbons, fin strips, bridge tubes, glow, walkable surfaces) built from the same generateTower() output
+- `src/vr/` — VR session, environment, interaction, wrist panel and intro
 
 The layout adapts to phones: the model, controls and drawings stack in one scrolling column.
+
+## VR (Towers tab)
+
+An **ENTER VR** button appears at the bottom right of the Towers studio when the browser supports immersive VR (Meta Quest Browser, Apple Vision Pro Safari, Chrome with a PC VR headset, or desktop Chrome with the Meta Immersive Web Emulator extension).
+
+- **Tabletop (1:500):** the model stands on a glowing plinth at waist height. Grip (or trigger/pinch) and move a hand to rotate it; grab with both hands and pull apart to scale between 1:1000 and 1:200.
+- **Human scale (1:1):** right stick forward aims a teleport arc, release to jump; right stick left/right snap-turns 30°. You can land on the ground, the podium roof, tower roofs and bridge roofs. With hand tracking, pinch-and-hold away from the menu to aim the arc.
+- **Wrist menu:** press **X** on the left controller (always shown when using hands). It has the same sliders as the desktop (Form / Cluster / Cuts), plus scale mode, viewpoints (Street, Podium, Bridge, Crown, Drone), city context, smooth locomotion (off by default, with a comfort vignette), a floating plan map and a render-quality override.
+- Any trigger skips the opening build-up animation.
+
+### Testing on a Quest over Wi-Fi
+
+1. Put the computer and the headset on the same Wi-Fi network.
+2. Run `npm run dev`. Vite prints a **Network** address such as `https://192.168.1.20:5173`.
+3. In the Quest Browser, open that address. Choose **Advanced → Proceed** on the certificate warning (it is the dev server's self-signed certificate).
+4. Open the Towers tab and press **ENTER VR**.
+
+If the Network line is missing, allow Node.js through the Windows firewall for private networks.
+
+To test without a headset, install the **Immersive Web Emulator** extension in desktop Chrome, open the dev URL, open DevTools → **WebXR** tab, then press ENTER VR.

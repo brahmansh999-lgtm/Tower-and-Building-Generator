@@ -1207,3 +1207,34 @@ input[type='range']:hover::-moz-range-thumb {
     background: #000;
   }
 }
+
+/* Enter VR: only rendered when navigator.xr supports immersive-vr */
+.vr-btn {
+  position: absolute;
+  right: 18px;
+  bottom: 40px;
+  z-index: 5;
+  height: 26px;
+  padding: 0 14px;
+  border: 1px solid var(--fg);
+  background: rgba(0, 0, 0, 0.6);
+  font-size: 9px;
+  letter-spacing: 0.26em;
+  color: var(--fg);
+  cursor: pointer;
+}
+.vr-btn:hover,
+.vr-btn.is-on {
+  background: var(--fg);
+  color: #000;
+}
+.vr-error {
+  position: absolute;
+  right: 18px;
+  bottom: 72px;
+  font-size: 8.5px;
+  letter-spacing: 0.2em;
+  color: var(--amber);
+  text-transform: uppercase;
+  pointer-events: none;
+}
