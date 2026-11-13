@@ -24,7 +24,7 @@ export default function VillaStudio({ active }) {
     window.history.replaceState(null, '', `#villas/${id}`);
   };
   const [gfa, setGfa] = useState(GFA_RANGE.default);
-  const [cuts, setCuts] = useState({ level: 0, frame: 'house', sectionPos: -10, axis: 'x', cut3D: false });
+  const [cuts, setCuts] = useState({ level: 0, frame: 'site', sectionPos: -10, axis: 'x', cut3D: false });
   const onCuts = useCallback((k, v) => setCuts((c) => ({ ...c, [k]: v })), []);
 
   // Board thumbnails use the fast path (no rooms); the selected option is fully laid out.

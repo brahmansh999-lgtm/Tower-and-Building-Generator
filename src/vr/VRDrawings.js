@@ -30,8 +30,12 @@ import VillaPlanView from '../views/VillaPlanView.jsx';
 import VillaSectionView from '../views/VillaSectionView.jsx';
 import { FLOOR_HEIGHT, BRIDGE_STATION_STRIDE, floorFitout } from '../geometry/generateTower.js';
 
-const RASTER = 2; //     canvas px per SVG px
-const HEAD = 76; //      canvas px of header strip above the drawing
+const RASTER = 2; //     layout px per SVG px
+const HEAD = 76; //      layout px of header strip above the drawing
+// Backing-store pixels per layout pixel. Boards are laid out in layout px and
+// the canvas is allocated RES× larger, so text and linework stay crisp in the
+// headset instead of being magnified from a low-resolution texture.
+const RES = 2;
 const THROTTLE = 160; // ms between re-rasterisations while values change
 const FONT = "'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace";
 const COL = {
@@ -71,12 +75,18 @@ function appCss() {
 class Board {
   constructor(name, cw, ch, widthM) {
     this.canvas = document.createElement('canvas');
-    this.canvas.width = cw;
-    this.canvas.height = ch;
+    this.cw = cw;
+    this.ch = ch;
+    this.canvas.width = Math.round(cw * RES);
+    this.canvas.height = Math.round(ch * RES);
     this.ctx = this.canvas.getContext('2d');
+    this.ctx.scale(RES, RES); // draw in layout px
+    this.ctx.imageSmoothingQuality = 'high';
     this.texture = new THREE.CanvasTexture(this.canvas);
     this.texture.colorSpace = THREE.SRGBColorSpace;
-    this.texture.anisotropy = 4;
+    this.texture.anisotropy = 16; // clamped to the GPU maximum by three.js
+    this.texture.minFilter = THREE.LinearMipmapLinearFilter;
+    this.texture.generateMipmaps = true;
     this.material = new THREE.MeshBasicMaterial({
       map: this.texture,
       transparent: true,
@@ -94,9 +104,9 @@ class Board {
 
   /** Black card, 1 px white frame, header label left and value right (cyan). */
   frame(left, right) {
-    const { ctx, canvas } = this;
-    const W = canvas.width;
-    const H = canvas.height;
+    const { ctx } = this;
+    const W = this.cw;
+    const H = this.ch;
     ctx.fillStyle = 'rgba(0,0,0,0.88)';
     ctx.fillRect(0, 0, W, H);
     ctx.strokeStyle = COL.fg;
@@ -167,6 +177,10 @@ class SvgBoard extends Board {
       if (!svg) throw new Error('no svg');
       const clone = svg.cloneNode(true);
       clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      // Rasterise at the backing-store size, not the layout size.
+      clone.setAttribute('viewBox', `0 0 ${this.svgW} ${this.svgH}`);
+      clone.setAttribute('width', String(this.svgW * RASTER * RES));
+      clone.setAttribute('height', String(this.svgH * RASTER * RES));
       const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
       style.textContent = appCss();
       clone.insertBefore(style, clone.firstChild);

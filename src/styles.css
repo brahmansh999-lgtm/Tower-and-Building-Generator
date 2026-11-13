@@ -1295,15 +1295,64 @@ input[type='range']:hover::-moz-range-thumb {
   pointer-events: none;
   transition: opacity 300ms ease;
 }
+/* Phones: the stage also holds the parameter panel, so anchor the render bar
+ * and VR button to the bottom edge of the 3D view (64svh, min 340px), not the
+ * stage. The bar spans the width: presets + HERO on top, mode switch bottom-left,
+ * VR bottom-right. */
 @media (max-width: 900px) {
+  .render-bar,
+  .vr-btn {
+    top: calc(64vh - 12px);
+    top: calc(max(64svh, 340px) - 12px);
+    bottom: auto;
+    transform: translateY(-100%);
+  }
   .render-bar {
-    top: auto;
-    bottom: 12px;
-    left: 16px;
-    right: auto;
-    align-items: flex-start;
+    left: 12px;
+    right: 12px;
+    flex-direction: column-reverse;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .render-bar > .render-seg,
+  .render-note {
+    align-self: flex-start;
   }
   .render-seg .seg-btn {
-    padding: 0 8px;
+    height: 32px;
+    padding: 0 14px;
+    letter-spacing: 0.18em;
+  }
+  .render-row {
+    width: 100%;
+    gap: 8px;
+  }
+  .render-row .render-seg {
+    flex: 1;
+    min-width: 0;
+  }
+  .render-row .render-seg .seg-btn {
+    flex: 1;
+    min-width: 0;
+    padding: 0 2px;
+    font-size: 8.5px;
+    letter-spacing: 0.12em;
+  }
+  .hero-btn {
+    flex: none;
+    height: 34px;
+    padding: 0 12px;
+    letter-spacing: 0.18em;
+  }
+  .vr-btn {
+    right: 12px;
+    height: 34px;
+    z-index: 6;
+  }
+  .vr-error {
+    top: calc(64vh - 100px);
+    top: calc(max(64svh, 340px) - 100px);
+    bottom: auto;
+    right: 12px;
   }
 }

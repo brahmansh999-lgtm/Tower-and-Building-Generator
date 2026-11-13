@@ -108,7 +108,7 @@ function TowerStudio({ active }) {
   const [qualityNote, setQualityNote] = useState('');
 
   // Plan framing: whole site, or zoomed onto one tower to read the fit-out.
-  const [planFocus, setPlanFocus] = useState(0);
+  const [planFocus, setPlanFocus] = useState('site');
   const focus = planFocus === 'site' || planFocus < model.towers.length ? planFocus : 'site';
 
   const maxLevel = model.params.floors - 1;

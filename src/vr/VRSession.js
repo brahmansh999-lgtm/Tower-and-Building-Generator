@@ -63,17 +63,31 @@ export async function isVRSupported() {
 }
 
 /**
- * Framebuffer scale heuristic from the user agent: Quest 3 / Pro (XR2 Gen 2
- * class) can afford 1.2× supersampling at 90 Hz; Quest 2 holds 72 Hz at 1.0×.
- * Vision Pro already renders at a very high native resolution. PC VR gets 1.2×
- * unless the display is already high-DPI.
+ * Framebuffer scale heuristic from the user agent. The browser's default XR
+ * framebuffer is well below the panel's native resolution (Quest Browser
+ * renders ~0.75× native per axis), which is what makes thin lines shimmer and
+ * small text unreadable. Quest 3 / Pro render at 1.5× (≈ native), Quest 2 at
+ * 1.3×; Vision Pro is already native; PC VR gets 1.4× unless high-DPI. The
+ * session then clamps this to the device's native factor (see enter()), and
+ * the realistic-mode frame-rate guard can still step it down.
  */
 export function detectQuality() {
   const ua = navigator.userAgent || '';
-  if (/Quest 3|Quest Pro/i.test(ua)) return { device: 'QUEST 3', scale: 1.2 };
-  if (/Quest|OculusBrowser/i.test(ua)) return { device: 'QUEST 2', scale: 1.0 };
+  if (/Quest 3|Quest Pro/i.test(ua)) return { device: 'QUEST 3', scale: 1.5 };
+  if (/Quest|OculusBrowser/i.test(ua)) return { device: 'QUEST 2', scale: 1.3 };
   if (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) return { device: 'VISION PRO', scale: 1.0 };
-  return { device: 'PC VR', scale: window.devicePixelRatio >= 2 ? 1.0 : 1.2 };
+  return { device: 'PC VR', scale: window.devicePixelRatio >= 2 ? 1.2 : 1.4 };
+}
+
+/** Never ask for more than the headset's native resolution (+20 % for AA). */
+function clampToNative(scale, session) {
+  try {
+    const native = window.XRWebGLLayer && XRWebGLLayer.getNativeFramebufferScaleFactor(session);
+    if (native > 0) return Math.max(1, Math.min(scale, native * 1.2));
+  } catch {
+    /* not exposed: use the heuristic as is */
+  }
+  return scale;
 }
 
 function readQuality() {
@@ -225,9 +239,9 @@ export class VRSession {
     this.note = '';
     this.fade = null;
     this.vig = 0;
-    this.planFocus = 0; // as the desktop: tower A's floor by default
+    this.planFocus = 'site'; // as the desktop: the whole site by default
     this.boardsOn = true;
-    this.dataOn = true;
+    this.dataOn = false; // project data sheet hidden until SHOW · DATA
     this.uiRevealed = false;
     this.builtLineScale = 0;
     this.maxZ = 1;
@@ -422,6 +436,7 @@ export class VRSession {
     this.ui = new THREE.Group();
     this.ui.name = 'vr-ui';
     this.ui.add(this.planBoard.mesh, this.sectionBoard.mesh, this.dataBoard.mesh);
+    this.dataBoard.mesh.visible = this.dataOn;
     this.rig.add(this.panel.mesh, this.ui);
     this.layoutUI();
 
@@ -948,13 +963,14 @@ export class VRSession {
   async enter() {
     if (this.session || !navigator.xr) return;
     const renderer = this.renderer;
-    this.activeScale = this.qualityScale();
     renderer.xr.setReferenceSpaceType('local-floor');
-    renderer.xr.setFramebufferScaleFactor(this.activeScale);
     const session = await navigator.xr.requestSession('immersive-vr', {
       requiredFeatures: ['local-floor'],
       optionalFeatures: ['bounded-floor', 'hand-tracking'],
     });
+    // Must be set before setSession(), which creates the XR framebuffer.
+    this.activeScale = clampToNative(this.qualityScale(), session);
+    renderer.xr.setFramebufferScaleFactor(this.activeScale);
     this.session = session;
     session.addEventListener('end', this.onEnd);
 
@@ -994,7 +1010,9 @@ export class VRSession {
     this.hooks.onPresentChange(true);
 
     await renderer.xr.setSession(session);
-    renderer.xr.setFoveation(0.5);
+    // Light foveation only: heavier settings blur the boards' text as soon as
+    // it is a little off the lens centre.
+    renderer.xr.setFoveation(0.2);
   }
 
   exit() {

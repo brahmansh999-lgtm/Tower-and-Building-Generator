@@ -25,8 +25,9 @@
 
 import * as THREE from 'three';
 
-const CW = 2048; //  canvas px
+const CW = 2048; //  layout px
 const CH = 1120;
+const RES = 1.5; //   backing-store px per layout px (3072 × 1680 texture)
 const ASPECT = CH / CW;
 export const PANEL_SIZES = { S: 0.5, M: 0.65, L: 0.8 }; // card width in metres
 const MIN_EYE_DIST = 0.6; // UI never closer than this to the eyes
@@ -83,7 +84,7 @@ export function vrColumn(vr, views, extra = []) {
     { t: 'seg', group: 'vr', key: 'panelSize', label: 'MENU SIZE', value: vr.panelSize, options: [['S', 'S'], ['M', 'M'], ['L', 'L']] },
     {
       t: 'seg', group: 'vr', key: 'quality', label: `QUALITY · ${vr.device} · ${vr.activeScale.toFixed(1)}×`, value: vr.quality,
-      options: [['auto', 'AUTO'], ['1.0', '1.0×'], ['1.2', '1.2×']],
+      options: [['auto', 'AUTO'], ['1.0', '1.0×'], ['1.2', '1.2×'], ['1.5', '1.5×']],
     },
   ];
 }
@@ -123,12 +124,13 @@ export class VRPanel {
   constructor(hooks) {
     this.hooks = hooks;
     this.canvas = document.createElement('canvas');
-    this.canvas.width = CW;
-    this.canvas.height = CH;
+    this.canvas.width = Math.round(CW * RES);
+    this.canvas.height = Math.round(CH * RES);
     this.ctx = this.canvas.getContext('2d');
+    this.ctx.scale(RES, RES); // draw in layout px
     this.texture = new THREE.CanvasTexture(this.canvas);
     this.texture.colorSpace = THREE.SRGBColorSpace;
-    this.texture.anisotropy = 4;
+    this.texture.anisotropy = 16; // clamped to the GPU maximum by three.js
     this.texture.generateMipmaps = true;
     this.material = new THREE.MeshBasicMaterial({
       map: this.texture,
@@ -150,9 +152,9 @@ export class VRPanel {
     this.drag = null;
     this.lastKey = '';
     this.anchored = false; // fallback placement when no left controller is tracked
-    this.docked = true;
-    this.size = 'M';
-    this.setSize('M');
+    this.docked = false; // worn on the left wrist by default
+    this.size = 'L';
+    this.setSize('L');
   }
 
   get visible() {
