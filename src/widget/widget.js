@@ -13,7 +13,8 @@
  * reflections, sun + hemisphere light lit by the hour → camera fitted to the
  * cluster → one frame → loop stopped, GPU memory released except the canvas.
  *
- * Any failure still ends READY, with a plain dark image.
+ * Any failure still ends READY, with a plain dark image and ok: false in the
+ * snapshot, so the widget script can keep its last good image instead.
  */
 
 import * as THREE from 'three';
@@ -462,8 +463,19 @@ function darkFallback(size) {
   return c;
 }
 
+/**
+ * One frame, or ~50 ms if frames never come. A hidden web view (the iPhone
+ * widget's WKWebView is never on screen) doesn't fire requestAnimationFrame,
+ * so a plain rAF wait would hang until the watchdog and return the dark
+ * fallback. preserveDrawingBuffer keeps the frame readable either way.
+ */
 function nextFrame() {
-  return new Promise((r) => requestAnimationFrame(() => r()));
+  return new Promise((r) => {
+    let done = false;
+    const go = () => { if (!done) { done = true; r(); } };
+    try { requestAnimationFrame(go); } catch { /* no rAF */ }
+    setTimeout(go, 50);
+  });
 }
 
 export async function startWidget(query) {
@@ -493,13 +505,16 @@ export async function startWidget(query) {
 
   let shown = null; // the canvas that holds the final image
   let image = null;
-  const finish = (canvas) => {
+  let ok = false; // true only for a real render (false = dark fallback)
+  const finish = (canvas, real = false) => {
     if (window.__WIDGET_READY__) return;
     shown = canvas;
     try {
       image = canvas.toDataURL(mime, 0.9);
       if (!image || image.length < 100) throw new Error('empty image');
+      ok = real;
     } catch {
+      ok = false;
       const fb = darkFallback(size);
       image = fb.toDataURL(mime, 0.9);
       if (shown.parentNode) shown.replaceWith(fb);
@@ -513,9 +528,9 @@ export async function startWidget(query) {
   window.getWidgetSnapshot = () => {
     if (!image) {
       const fb = darkFallback(size);
-      return { image: fb.toDataURL(mime, 0.9), meta };
+      return { image: fb.toDataURL(mime, 0.9), meta, ok: false };
     }
-    return { image, meta };
+    return { image, meta, ok };
   };
 
   // Hard stop: whatever happens, READY within 12 s.
@@ -546,7 +561,7 @@ export async function startWidget(query) {
     ctx.renderer.render(ctx.scene, ctx.camera);
     await nextFrame();
     ctx.renderer.setAnimationLoop(null);
-    finish(canvas);
+    finish(canvas, true);
   } catch (err) {
     console.error('[widget] render failed', err);
     const fb = darkFallback(size);
