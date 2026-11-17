@@ -6,7 +6,12 @@
  * page in a hidden web view, waits for window.__WIDGET_READY__ and calls
  * window.getWidgetSnapshot().
  *
- * URL: widget=1, seed=<int>, size=<px> (1024), hour=<0-23> (now), format=png|jpeg (jpeg, q 0.9)
+ * URL: widget=1, seed=<int>, size=<px> (1024), hour=<0-23> (now), format=png|jpeg (jpeg, q 0.9),
+ *      turn=<deg> (0): orbit the camera this far around the tower from its default view.
+ *
+ * Orbit mode (widget=1&orbit=1): full-screen and interactive instead of a
+ * still. The camera glides 45° around the tower every 5 s; a "Next tower"
+ * button loads a new seed. Used when the widget is tapped.
  *
  * Pipeline: seed → paramsFromSeed → generateTower → buildRealisticMeshes
  * (merged, one geometry per material) → physical materials, RoomEnvironment
@@ -435,7 +440,9 @@ function renderTower(canvas, opts) {
   // Camera: ~40 mm on full frame (34° vertical), side-lit 3/4 aerial.
   const camera = new THREE.PerspectiveCamera(34, 1, 1, 10000);
   const sideways = (rnd() < 0.5 ? -1 : 1) * THREE.MathUtils.degToRad(45 + rnd() * 15);
-  const viewAz = L.night ? 0.7 + (rnd() - 0.5) * 0.6 : L.az + sideways;
+  const baseAz = L.night ? 0.7 + (rnd() - 0.5) * 0.6 : L.az + sideways;
+  // turn: orbit offset in degrees (the seeded random calls above stay in the same order).
+  const viewAz = baseAz + THREE.MathUtils.degToRad(Number.isFinite(opts.turn) ? opts.turn : 0);
   const elev = 20 + rnd() * 8;
   const dist = fitCamera(camera, box, viewAz, elev);
 
@@ -444,7 +451,7 @@ function renderTower(canvas, opts) {
   scene.add(skyDome(L, dist * 30));
   scene.background = L.hor;
 
-  return { renderer, scene, camera, params, model, dispose: [envRT, glassMap, emissive, ...Object.values(mats), plantMat] };
+  return { renderer, scene, camera, params, model, box, viewAz, elev, dispose: [envRT, glassMap, emissive, ...Object.values(mats), plantMat] };
 }
 
 /* ---------------------------------------------------------------------------
@@ -485,6 +492,8 @@ export async function startWidget(query) {
   const hourQ = Number.parseInt(query.get('hour'), 10);
   const hour = Number.isFinite(hourQ) ? clamp(hourQ, 0, 23) : new Date().getHours();
   const format = query.get('format') === 'png' ? 'png' : 'jpeg';
+  const turnQ = Number.parseFloat(query.get('turn'));
+  const turn = Number.isFinite(turnQ) ? turnQ : 0;
   const mime = format === 'png' ? 'image/png' : 'image/jpeg';
 
   // Bare page: no margins, no scroll, just the canvas.
@@ -502,6 +511,8 @@ export async function startWidget(query) {
     floors: params.floors,
     twistDeg: params.twist,
   };
+
+  if (query.get('orbit') === '1') return startOrbit({ seed, hour, turn, meta });
 
   let shown = null; // the canvas that holds the final image
   let image = null;
@@ -551,7 +562,7 @@ export async function startWidget(query) {
 
   let ctx = null;
   try {
-    ctx = renderTower(canvas, { seed, size, hour });
+    ctx = renderTower(canvas, { seed, size, hour, turn });
     // Let the browser settle (shader compile, texture upload) before the final frame.
     if (ctx.renderer.compileAsync) await ctx.renderer.compileAsync(ctx.scene, ctx.camera);
     for (let i = 0; i < 2; i++) {
@@ -577,4 +588,100 @@ export async function startWidget(query) {
       ctx.renderer.renderLists.dispose();
     }
   }
+}
+
+/* ---------------------------------------------------------------------------
+ * Orbit mode (?widget=1&orbit=1): full screen, camera steps around the tower
+ * ------------------------------------------------------------------------- */
+
+const ORBIT_STEP = Math.PI / 4; // 45° per step
+const ORBIT_EVERY_MS = 5000; // a new view every 5 s
+const ORBIT_GLIDE_MS = 1400; // how long each move takes
+
+const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+
+async function startOrbit({ seed, hour, turn, meta }) {
+  const html = document.documentElement;
+  html.style.cssText = 'margin:0;padding:0;background:#05070a;overflow:hidden;height:100%';
+  document.body.style.cssText =
+    'margin:0;padding:0;background:#05070a;overflow:hidden;height:100%;display:flex;align-items:center;justify-content:center;' +
+    'font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;-webkit-user-select:none;user-select:none';
+  document.body.innerHTML = '';
+
+  // Square canvas as large as the screen allows, at the device's pixel ratio.
+  const css = Math.floor(Math.min(window.innerWidth, window.innerHeight)) || 390;
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  const size = clamp(Math.round(css * dpr), 256, 2048);
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  canvas.style.cssText = `display:block;width:${css}px;height:${css}px`;
+  document.body.appendChild(canvas);
+
+  // Caption (bottom-left) and "Next tower" button (bottom-right).
+  const ui = document.createElement('div');
+  ui.style.cssText =
+    'position:fixed;left:0;right:0;bottom:0;display:flex;align-items:flex-end;justify-content:space-between;gap:12px;' +
+    'padding:20px 20px calc(20px + env(safe-area-inset-bottom));' +
+    'background:linear-gradient(to top,rgba(0,0,0,.55),rgba(0,0,0,0));pointer-events:none';
+  const caption = document.createElement('div');
+  caption.style.cssText = 'color:#fff;min-width:0;text-shadow:0 1px 3px rgba(0,0,0,.5)';
+  const details = [`${Math.round(meta.heightM)} m`, `${meta.floors} fl`, `${meta.towers} ${meta.towers === 1 ? 'tower' : 'towers'}`].join(' · ');
+  caption.innerHTML =
+    `<div style="font-size:17px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>` +
+    `<div style="font-size:13px;opacity:.7;margin-top:2px;white-space:nowrap"></div>`;
+  caption.children[0].textContent = meta.typeName;
+  caption.children[1].textContent = details;
+  const next = document.createElement('button');
+  next.textContent = 'Next tower';
+  next.style.cssText =
+    'pointer-events:auto;flex:none;border:0;border-radius:999px;padding:9px 16px;font:600 15px -apple-system,system-ui,sans-serif;' +
+    'color:#fff;background:rgba(255,255,255,.18);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px)';
+  next.addEventListener('click', () => {
+    let n;
+    do { n = Math.floor(Math.random() * 1000000) + 1; } while (n === seed);
+    const q = new URLSearchParams(location.search);
+    q.set('seed', String(n));
+    q.set('turn', '0');
+    location.replace(`${location.pathname}?${q.toString()}`);
+  });
+  ui.append(caption, next);
+  document.body.appendChild(ui);
+  window.__ORBIT_SEED__ = seed;
+
+  let ctx;
+  try {
+    ctx = renderTower(canvas, { seed, size, hour, turn });
+  } catch (err) {
+    console.error('[orbit] render failed', err);
+    canvas.replaceWith(darkFallback(size));
+    window.__WIDGET_READY__ = true;
+    return;
+  }
+  const { renderer, scene, camera, box, elev } = ctx;
+  let az = ctx.viewAz;
+  const draw = () => renderer.render(scene, camera);
+  if (renderer.compileAsync) await renderer.compileAsync(scene, camera);
+  draw();
+  window.__WIDGET_READY__ = true;
+
+  // Every 5 s: glide 45° further around the tower, then hold still (no
+  // rendering while still, to save battery).
+  let gliding = false;
+  const glide = () => {
+    if (gliding || document.hidden) return;
+    gliding = true;
+    const from = az;
+    const to = az + ORBIT_STEP;
+    const t0 = performance.now();
+    const frame = (now) => {
+      const t = Math.min(1, (now - t0) / ORBIT_GLIDE_MS);
+      az = from + (to - from) * easeInOut(t);
+      fitCamera(camera, box, az, elev);
+      draw();
+      if (t < 1) requestAnimationFrame(frame);
+      else gliding = false;
+    };
+    requestAnimationFrame(frame);
+  };
+  setInterval(glide, ORBIT_EVERY_MS);
 }
