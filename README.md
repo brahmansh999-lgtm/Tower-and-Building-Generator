@@ -19,7 +19,7 @@ Then open the local URL Vite prints (default https://localhost:5173). The dev se
 
 ## Controls
 
-- **Form:** base width (20–60 m), sway (0–30 m), twist (0–360°)
+- **Form:** height (30–120 floors, tallest tower), base width (20–60 m), sway (0–30 m), twist (0–360°)
 - **Cluster:** towers (1–5), links per connection (0–8), connection mode (pairs / all / chain)
 - **Cuts:** plan level, section position and axis, and a toggle to slice the 3D model
 - **Render (top right of the 3D view, in both studios):** STYLIZED (the line-drawing look) or REALISTIC; in realistic mode, a lighting preset (GOLDEN / DAY / DUSK / NIGHT) and a HERO camera
