@@ -71,13 +71,6 @@ export default function Controls({ form, onForm, cuts, onCuts, maxLevel, section
         <div className="controls-body">
           <div className="micro">FORM</div>
           <Slider
-            label="Height"
-            {...R.floors}
-            value={form.floors}
-            onChange={(v) => onForm('floors', v)}
-            readout={`${form.floors} FL · ${(form.floors * FLOOR_HEIGHT).toFixed(1)} m`}
-          />
-          <Slider
             label="Width"
             {...R.width}
             value={form.width}
