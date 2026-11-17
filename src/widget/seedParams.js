@@ -6,8 +6,9 @@
  *
  * Every value stays inside a band that reads as a buildable tower:
  *   - slenderness (height / plate width) between about 5 and 10
- *   - strong twist goes with gentle sway (and vice versa), so nothing corkscrews
- *   - 1 tower has no bridges; 3–4 towers link in pairs or a chain, never
+ *   - twist is strong (120–360°) and sway is kept gentle (0–6 m), which reads
+ *     as a clean wound form rather than a wobbling one
+ *   - 1 tower has no bridges; 3–5 towers link in pairs or a chain, never
  *     all-to-all, so bridges never cross
  *   - bridges per link are capped by height, so the slots keep their spacing
  */
@@ -42,12 +43,12 @@ export function paramsFromSeed(seed) {
   rnd();
   const pick = (lo, hi) => lo + (hi - lo) * rnd();
 
-  // Tower count: pairs are the typology's home; singles and clusters less so.
+  // Tower count 1–5, weighted toward clusters for variety.
   const r = rnd();
-  const towers = r < 0.2 ? 1 : r < 0.6 ? 2 : r < 0.85 ? 3 : 4;
+  const towers = r < 0.1 ? 1 : r < 0.3 ? 2 : r < 0.55 ? 3 : r < 0.8 ? 4 : 5;
 
-  // Height of the tallest tower. Clusters stay a little lower.
-  const floors = Math.round(pick(towers >= 3 ? 50 : 55, towers >= 3 ? 100 : 112));
+  // Height of the tallest tower. Bigger clusters stay a little lower.
+  const floors = Math.round(pick(towers >= 4 ? 48 : towers === 3 ? 52 : 55, towers >= 4 ? 96 : towers === 3 ? 104 : 112));
   const heightM = floors * 3.5;
 
   // Plate width keeps slenderness between ~5 and ~10.
@@ -55,9 +56,10 @@ export function paramsFromSeed(seed) {
   const wMax = Math.min(towers === 1 ? 54 : 46, Math.floor(heightM / 5));
   const width = Math.round(pick(wMin, Math.max(wMin, wMax)));
 
-  // Twist 0–360°, sway limited by twist: a strongly wound tower sways less.
-  const twist = Math.round(Math.pow(rnd(), 0.85) * 360);
-  const swayCap = twist > 240 ? 8 : twist > 150 ? 14 : 22;
+  // Strong twist (120–360°, leaning high); gentle sway, gentler still when
+  // the twist is strongest.
+  const twist = Math.round(120 + Math.pow(rnd(), 0.7) * 240);
+  const swayCap = twist > 270 ? 4 : 6;
   const sway = Math.round(pick(0, swayCap) * 2) / 2;
 
   // Shape extras (no sliders): taper, plate depth, fin density.
@@ -75,8 +77,9 @@ export function paramsFromSeed(seed) {
 
 /** Short label, e.g. "Twin Twist", "Swaying Trio", "Tapered Solo". */
 export function typeName(p) {
-  const noun = ['Solo', 'Twin', 'Trio', 'Quartet'][p.towers - 1] || 'Cluster';
+  const noun = ['Solo', 'Twin', 'Trio', 'Quartet', 'Quintet'][p.towers - 1] || 'Cluster';
   if (p.sway >= 14) return `Swaying ${noun}`;
+  if (p.twist >= 300) return `${noun} Spiral`;
   if (p.twist >= 220) return `${noun} Helix`;
   if (p.twist >= 70) return `${noun} Twist`;
   if (p.taper >= 0.15) return `Tapered ${noun}`;
