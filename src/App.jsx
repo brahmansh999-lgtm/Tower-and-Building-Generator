@@ -9,7 +9,7 @@ import Landing from './Landing.jsx';
 import Credit from './Credit.jsx';
 import VREnterButton, { useVREntry } from './ui/VREnter.jsx';
 
-const INITIAL_FORM = { floors: 84, width: 36, sway: 14, twist: 120, towers: 2, bridges: 2, mode: 'adjacent' };
+const INITIAL_FORM = { floors: 86, width: 36, sway: 14, twist: 120, towers: 2, bridges: 2, mode: 'adjacent' };
 const INITIAL_CUTS = { planLevel: 48, sectionPos: 0, axis: 'x', cut3D: false };
 const INITIAL_RENDER = { mode: 'stylized', preset: 'golden' };
 
