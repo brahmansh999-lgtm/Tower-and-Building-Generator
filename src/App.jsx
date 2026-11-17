@@ -8,8 +8,13 @@ import VillaStudio from './VillaStudio.jsx';
 import Landing from './Landing.jsx';
 import Credit from './Credit.jsx';
 import VREnterButton, { useVREntry } from './ui/VREnter.jsx';
+import { paramsFromSeed, parseSeed } from './widget/seedParams.js';
 
-const INITIAL_FORM = { floors: 86, width: 36, sway: 14, twist: 120, towers: 2, bridges: 2, mode: 'adjacent' };
+const DEFAULT_FORM = { floors: 86, width: 36, sway: 14, twist: 120, towers: 2, bridges: 2, mode: 'adjacent' };
+// ?seed=N presets the sliders (and the seed's taper / plate depth / fin density)
+// so the live app shows the same tower as the widget for that seed.
+const URL_SEED = parseSeed(new URLSearchParams(window.location.search).get('seed'));
+const INITIAL_FORM = URL_SEED == null ? DEFAULT_FORM : paramsFromSeed(URL_SEED);
 const INITIAL_CUTS = { planLevel: 48, sectionPos: 0, axis: 'x', cut3D: false };
 const INITIAL_RENDER = { mode: 'stylized', preset: 'golden' };
 
@@ -54,7 +59,7 @@ export default function App() {
   // be linked; no hash opens the start screen.
   const initial = () => {
     const h = window.location.hash;
-    return h.startsWith('#villas') ? 'villas' : h.startsWith('#towers') ? 'towers' : 'home';
+    return h.startsWith('#villas') ? 'villas' : h.startsWith('#towers') || (URL_SEED != null && !h) ? 'towers' : 'home';
   };
   const [tab, setTabState] = useState(initial);
   // Studios mount the first time they are opened and then stay mounted.

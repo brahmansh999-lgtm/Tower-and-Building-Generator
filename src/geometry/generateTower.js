@@ -96,7 +96,7 @@ const smoothstep = (e0, e1, x) => {
 function radiusFactor(t, ch) {
   const p = Math.log(0.5) / Math.log(ch.bulgeAt);
   const bulge = 1 + ch.bulge * Math.sin(Math.PI * Math.pow(t, p));
-  const taper = 1 - TAPER * t;
+  const taper = 1 - (ch.taper ?? TAPER) * t;
   const crownStart = 1 - CROWN_FRACTION;
   let crown = 1;
   if (t > crownStart) {
@@ -160,8 +160,8 @@ function shoelace(p) {
 }
 
 /** Fin count grows with plate size: 24 fins at 20 m → 48 fins at 60 m (even). */
-function finCountFor(width) {
-  return 2 * Math.round((24 + ((clamp(width, 20, 60) - 20) / 40) * 24) / 2);
+function finCountFor(width, density = 1) {
+  return 2 * Math.round(clamp((24 + ((clamp(width, 20, 60) - 20) / 40) * 24) * density, 16, 60) / 2);
 }
 
 /* ---------------------------------------------------------------------------
@@ -535,7 +535,14 @@ export function generateTower(params = {}) {
   const nBridges = Math.round(clamp(params.bridges ?? 4, 0, 8));
   const mode = CONNECTION_MODES.includes(params.mode) ? params.mode : 'adjacent';
   const twistRad = (twist * Math.PI) / 180;
-  const chars = CHARACTERS.slice(0, nTowers);
+  // Optional shape extras (not sliders; the seeded widget sets them). When
+  // absent every tower keeps exactly its CHARACTERS values.
+  const taperOpt = params.taper == null ? null : clamp(params.taper, 0, 0.25);
+  const depthOpt = params.depth == null ? 1 : clamp(params.depth, 0.85, 1.15);
+  const finDensity = params.finDensity == null ? 1 : clamp(params.finDensity, 0.6, 1.4);
+  const chars = CHARACTERS.slice(0, nTowers).map((ch) =>
+    taperOpt == null && depthOpt === 1 ? ch : { ...ch, taper: taperOpt ?? TAPER, aspect: clamp(ch.aspect * depthOpt, 0.6, 0.95) }
+  );
 
   /*
    * Spacing so towers never intersect at any level, including peak sway.
@@ -547,7 +554,7 @@ export function generateTower(params = {}) {
   let envelope = 0;
   let reach = 0;
   chars.forEach((ch) => {
-    const M = finCountFor(width * ch.width) * 2;
+    const M = finCountFor(width * ch.width, finDensity) * 2;
     const unit = unitPlate(M, ch.aspect);
     const rf = sampleMax((t) => radiusFactor(t, ch));
     envelope = Math.max(envelope, (width * ch.width) / 2 * unit.maxR * rf);
@@ -575,7 +582,7 @@ export function generateTower(params = {}) {
     const tFloors = Math.max(MIN_TOWER_FLOORS, Math.round(floors * ch.height));
     totalFloors += tFloors;
     const tWidth = width * ch.width;
-    const finCount = finCountFor(tWidth);
+    const finCount = finCountFor(tWidth, finDensity);
     const M = finCount * 2; // plate resolution: fins sit on every 2nd vertex
     const unit = unitPlate(M, ch.aspect);
     const baseRadius = tWidth / 2;
@@ -752,7 +759,7 @@ export function generateTower(params = {}) {
   });
 
   return {
-    params: { floors, width, towers: nTowers, sway, twist, bridges: nBridges, mode },
+    params: { floors, width, towers: nTowers, sway, twist, bridges: nBridges, mode, taper: taperOpt, depth: depthOpt, finDensity },
     towers,
     bridges,
     podium,
@@ -767,7 +774,7 @@ export function generateTower(params = {}) {
       bridges: bridges.length,
       sway,
       twist,
-      finCount: finCountFor(width),
+      finCount: finCountFor(width, finDensity),
     },
   };
 }

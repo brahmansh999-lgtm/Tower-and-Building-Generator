@@ -76,3 +76,21 @@ All textures are drawn in code, so there is nothing to download. Optionally, a C
 If the Network line is missing, allow Node.js through the Windows firewall for private networks.
 
 To test without a headset, install the **Immersive Web Emulator** extension in desktop Chrome, open the dev URL, open DevTools → **WebXR** tab, then press ENTER VR.
+
+## Widget mode
+
+`?widget=1` renders one square, realistic still of a seeded tower with no UI, for an iPhone home-screen widget (e.g. a Scriptable script that loads the page in a hidden web view).
+
+| Parameter | Meaning | Default |
+| --- | --- | --- |
+| `widget=1` | turn on widget mode | — |
+| `seed=<int>` | tower variant; the same seed always gives the same tower | 1 |
+| `size=<px>` | square canvas size (already includes retina scale), 64–2048 | 1024 |
+| `hour=<0-23>` | time of day for the lighting | current hour |
+| `format=png\|jpeg` | snapshot format (JPEG at quality 0.9) | jpeg |
+
+When the frame is drawn the page sets `window.__WIDGET_READY__ = true`, and `window.getWidgetSnapshot()` returns `{ image: <dataURL>, meta: { seed, typeName, towers, heightM, floors, twistDeg } }`. If anything fails it still becomes ready, with a plain dark image.
+
+Opening the normal app with `?seed=<int>` shows the same tower live, with the sliders preset from that seed.
+
+Live: https://brahmansh999-lgtm.github.io/Tower-and-Building-Generator/ · example: [`?widget=1&seed=42`](https://brahmansh999-lgtm.github.io/Tower-and-Building-Generator/?widget=1&seed=42)
